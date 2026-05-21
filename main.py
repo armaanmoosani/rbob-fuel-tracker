@@ -312,7 +312,7 @@ def build_html_email(
     ctx_30d_vs  = ''
     if thirty_day_avg:
         diff = ((current_price - thirty_day_avg) / thirty_day_avg) * 100
-        ctx_30d_vs = f'<br><span style="font-size:11px;color:{"#22c55e" if diff >= 0 else "#ef4444"};">{("+" if diff >= 0 else "")}{diff:.2f}% vs now</span>'
+        ctx_30d_vs = f'<br><span style="font-size:11px;color:{"#22c55e" if diff >= 0 else "#ef4444"};">{("+" if diff >= 0 else "")}{diff:.2f}% vs avg</span>'
 
     # ---------- Chart sections ----------
     if chart_intraday_b64:
