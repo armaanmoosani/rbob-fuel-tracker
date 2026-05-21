@@ -16,6 +16,8 @@ from datetime import datetime, date, timezone
 import requests
 import pytz
 import yfinance as yf
+import concurrent.futures
+import pandas_market_calendars as mcal
 
 SCHWAB_APP_KEY       = os.environ['SCHWAB_APP_KEY']
 SCHWAB_APP_SECRET    = os.environ['SCHWAB_APP_SECRET']
@@ -556,8 +558,126 @@ def send_once_today(key, subject, all_data, now, alert_context):
     except Exception as e:
         print(f"Warning: could not save lock {db_key}: {e}")
 
+
+def is_market_open(dt):
+    try:
+        cme = mcal.get_calendar('CMEGlobex_RB')
+        from datetime import timedelta
+        start = (dt - timedelta(days=1)).date()
+        end = (dt + timedelta(days=2)).date()
+        schedule = cme.schedule(start_date=start, end_date=end)
+        return cme.open_at_time(schedule, dt)
+    except Exception as e:
+        print(f"Calendar check failed: {e}. Defaulting to open.")
+        return True
+
+def fetch_commodity(prefix, cfg, now, access_token):
+    schwab_symbol = get_front_month_schwab_symbol(now, prefix)
+    print(f"[{prefix}] Targeting front-month: Schwab {schwab_symbol} | yf {cfg['yf_symbol']}")
+    
+    current_price = open_price = high_price = low_price = None
+    data_source = None
+    try:
+        res = requests.get(
+            "https://api.schwabapi.com/marketdata/v1/quotes",
+            params={"symbols": schwab_symbol},
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15
+        )
+        res.raise_for_status()
+        res_json = res.json()
+        if schwab_symbol in res_json:
+            quote = res_json[schwab_symbol]['quote']
+        else:
+            quote = res_json[list(res_json.keys())[0]]['quote']
+        
+        current_price = float(quote['lastPrice'])
+        open_price    = float(quote['openPrice'])
+        high_price    = float(quote.get('highPrice', 0.0))
+        low_price     = float(quote.get('lowPrice', 0.0))
+        data_source   = 'schwab'
+        print(f"[{prefix}] Schwab success")
+    except Exception as e:
+        print(f"[{prefix}] Schwab failed: {e}. Falling back to yfinance.")
+        import time
+        for attempt in range(3):
+            try:
+                yf_t = yf.Ticker(cfg['yf_symbol'])
+                current_price = float(yf_t.fast_info['last_price'])
+                hist = yf_t.history(period='1d', interval='5m')
+                if not hist.empty:
+                    open_price = float(hist['Open'].iloc[0])
+                    high_price = float(hist['High'].max())
+                    low_price  = float(hist['Low'].min())
+                else:
+                    open_price = current_price
+                    high_price = low_price = 0.0
+                data_source = 'yfinance'
+                print(f"[{prefix}] yfinance fallback success")
+                break
+            except Exception as yf_err:
+                if attempt < 2:
+                    time.sleep(10)
+                else:
+                    print(f"[{prefix}] yfinance fallback failed: {yf_err}")
+
+    if not current_price:
+        print(f"[{prefix}] Could not fetch data, skipping.")
+        return None
+        
+    if not open_price: open_price = current_price
+    daily_pct = ((current_price - open_price) / open_price) * 100
+    
+    yesterday_close = five_day_high = five_day_low = thirty_day_avg = None
+    history_5d = []
+    try:
+        yf_t = yf.Ticker(cfg['yf_symbol'])
+        h5d = yf_t.history(period='5d', interval='1h')
+        if not h5d.empty:
+            history_5d = [{"t": idx.astimezone(TZ).isoformat(), "p": round(float(row['Close']), 4)} for idx, row in h5d.iterrows()]
+            five_day_high = float(h5d['High'].max())
+            five_day_low  = float(h5d['Low'].min())
+            today_date = now.date()
+            prev = h5d[[d.date() < today_date for d in h5d.index.to_pydatetime()]]
+            if not prev.empty: yesterday_close = float(prev['Close'].iloc[-1])
+        h30d = yf_t.history(period='1mo', interval='1d')
+        if not h30d.empty:
+            thirty_day_avg = float(h30d['Close'].mean())
+    except Exception:
+        pass
+
+    history_intra = load_price_history(prefix)
+    history_intra = append_price(history_intra, now, current_price)
+    save_price_history(history_intra, prefix)
+    
+    chart_intra = generate_intraday_chart(history_intra, current_price, open_price, high_price, low_price, daily_pct, cfg['name'])
+    chart_5d = generate_5day_chart(history_5d, current_price)
+    
+    print(f"[{prefix}] Fetched: ${current_price:.4f} ({daily_pct:+.2f}%)")
+    return {
+        'prefix': prefix,
+        'current_price': current_price,
+        'open_price': open_price,
+        'high_price': high_price,
+        'low_price': low_price,
+        'daily_pct': daily_pct,
+        'yesterday_close': yesterday_close,
+        'five_day_high': five_day_high,
+        'five_day_low': five_day_low,
+        'thirty_day_avg': thirty_day_avg,
+        'chart_intraday_b64': chart_intra,
+        'chart_5d_b64': chart_5d
+    }
+
+
 if __name__ == "__main__":
+
     now = datetime.now(TZ)
+    
+    if not is_market_open(now):
+        print(f"Market is closed at {now}. Exiting to prevent stale alerts.")
+        sys.exit(0)
+
     
     auth_header = base64.b64encode(f"{SCHWAB_APP_KEY}:{SCHWAB_APP_SECRET}".encode()).decode()
     try:
@@ -582,102 +702,12 @@ if __name__ == "__main__":
         sys.exit(1)
 
     all_data = {}
-    for prefix, cfg in COMMODITIES.items():
-        schwab_symbol = get_front_month_schwab_symbol(now, prefix)
-        print(f"[{prefix}] Targeting front-month: Schwab {schwab_symbol} | yf {cfg['yf_symbol']}")
-        
-        current_price = open_price = high_price = low_price = None
-        data_source = None
-        try:
-            res = requests.get(
-                "https://api.schwabapi.com/marketdata/v1/quotes",
-                params={"symbols": schwab_symbol},
-                headers={"Authorization": f"Bearer {access_token}"},
-                timeout=15
-            )
-            res.raise_for_status()
-            res_json = res.json()
-            if schwab_symbol in res_json:
-                quote = res_json[schwab_symbol]['quote']
-            else:
-                quote = res_json[list(res_json.keys())[0]]['quote']
-            
-            current_price = float(quote['lastPrice'])
-            open_price    = float(quote['openPrice'])
-            high_price    = float(quote.get('highPrice', 0.0))
-            low_price     = float(quote.get('lowPrice', 0.0))
-            data_source   = 'schwab'
-            print(f"[{prefix}] Schwab success")
-        except Exception as e:
-            print(f"[{prefix}] Schwab failed: {e}. Falling back to yfinance.")
-            import time
-            for attempt in range(3):
-                try:
-                    yf_t = yf.Ticker(cfg['yf_symbol'])
-                    current_price = float(yf_t.fast_info['last_price'])
-                    hist = yf_t.history(period='1d', interval='5m')
-                    if not hist.empty:
-                        open_price = float(hist['Open'].iloc[0])
-                        high_price = float(hist['High'].max())
-                        low_price  = float(hist['Low'].min())
-                    else:
-                        open_price = current_price
-                        high_price = low_price = 0.0
-                    data_source = 'yfinance'
-                    print(f"[{prefix}] yfinance fallback success")
-                    break
-                except Exception as yf_err:
-                    if attempt < 2:
-                        time.sleep(10)
-                    else:
-                        print(f"[{prefix}] yfinance fallback failed: {yf_err}")
-
-        if not current_price:
-            print(f"[{prefix}] Could not fetch data, skipping.")
-            continue
-            
-        if not open_price: open_price = current_price
-        daily_pct = ((current_price - open_price) / open_price) * 100
-        
-        yesterday_close = five_day_high = five_day_low = thirty_day_avg = None
-        history_5d = []
-        try:
-            yf_t = yf.Ticker(cfg['yf_symbol'])
-            h5d = yf_t.history(period='5d', interval='1h')
-            if not h5d.empty:
-                history_5d = [{"t": idx.astimezone(TZ).isoformat(), "p": round(float(row['Close']), 4)} for idx, row in h5d.iterrows()]
-                five_day_high = float(h5d['High'].max())
-                five_day_low  = float(h5d['Low'].min())
-                today_date = now.date()
-                prev = h5d[[d.date() < today_date for d in h5d.index.to_pydatetime()]]
-                if not prev.empty: yesterday_close = float(prev['Close'].iloc[-1])
-            h30d = yf_t.history(period='1mo', interval='1d')
-            if not h30d.empty:
-                thirty_day_avg = float(h30d['Close'].mean())
-        except Exception:
-            pass
-
-        history_intra = load_price_history(prefix)
-        history_intra = append_price(history_intra, now, current_price)
-        save_price_history(history_intra, prefix)
-        
-        chart_intra = generate_intraday_chart(history_intra, current_price, open_price, high_price, low_price, daily_pct, cfg['name'])
-        chart_5d = generate_5day_chart(history_5d, current_price)
-        
-        all_data[prefix] = {
-            'current_price': current_price,
-            'open_price': open_price,
-            'high_price': high_price,
-            'low_price': low_price,
-            'daily_pct': daily_pct,
-            'yesterday_close': yesterday_close,
-            'five_day_high': five_day_high,
-            'five_day_low': five_day_low,
-            'thirty_day_avg': thirty_day_avg,
-            'chart_intraday_b64': chart_intra,
-            'chart_5d_b64': chart_5d
-        }
-        print(f"[{prefix}] Fetched: ${current_price:.4f} ({daily_pct:+.2f}%)")
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(COMMODITIES)) as executor:
+        futures = [executor.submit(fetch_commodity, prefix, cfg, now, access_token) for prefix, cfg in COMMODITIES.items()]
+        for future in concurrent.futures.as_completed(futures):
+            res = future.result()
+            if res:
+                all_data[res.pop('prefix')] = res
 
     session_str = get_session_date_str(now)
     

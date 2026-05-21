@@ -3,3 +3,4 @@ pytz
 pynacl
 matplotlib
 yfinance
+pandas_market_calendars
