@@ -33,7 +33,7 @@ To run this in your own GitHub account:
 3. **Configure GitHub Secrets**:
    Go to your repository **Settings > Secrets and variables > Actions** and add the following repository secrets:
    - `GH_PAT`: Your GitHub Personal Access Token
-   - `GH_REPO`: Your repository path (e.g., `username/rbob-fuel-tracker`)
+   - `GH_REPO`: Your repository path (e.g., `username/rbob-ho-fuel-tracker`)
    - `GMAIL_USER`: The sending Gmail address
    - `GMAIL_APP_PASSWORD`: Google App Password (not your standard login password)
    - `TO_EMAIL`: The destination email address for the alerts

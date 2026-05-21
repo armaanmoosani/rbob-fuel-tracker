@@ -457,7 +457,7 @@ def build_html_email(subject, all_data, now, alert_context):
           
           <!-- FOOTER -->
           <div style="background:#f1f5f9;border-radius:0 0 10px 10px;padding:10px 20px;border:1px solid #e2e8f0;border-top:none;">
-            <p style="margin:0;font-size:9px;color:#64748b;line-height:1.6;">Automated by armaanmoosani/rbob-fuel-tracker</p>
+            <p style="margin:0;font-size:9px;color:#64748b;line-height:1.6;">Automated by armaanmoosani/rbob-ho-fuel-tracker</p>
           </div>
         </div>
       </td>
