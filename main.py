@@ -172,60 +172,180 @@ def generate_chart(history, current_price, open_price, daily_pct):
 # Email Sending  (HTML with embedded chart)
 # ---------------------------------------------------------------------------
 
-def send_email(subject, text_body, chart_b64=None):
+def build_html_email(
+    subject, current_price, open_price, daily_pct,
+    now, alert_context, chart_b64
+):
     """
-    Send a styled HTML email with an optional embedded price chart.
-    Falls back gracefully if chart is unavailable.
+    Build a fully structured HTML email body.
+    alert_context: dict with keys 'label', 'action', 'action_color'
     """
+    cid = uuid.uuid4().hex
+
+    is_up       = daily_pct >= 0
+    pct_color   = '#22c55e' if is_up else '#ef4444'
+    pct_bg      = '#052e16' if is_up else '#2d0a0a'
+    arrow       = '▲' if is_up else '▼'
+    pct_sign    = '+' if is_up else ''
+    dollar_chg  = current_price - open_price
+
+    chart_section = (
+        f'<img src="cid:{cid}" alt="/RB Price Chart — last 25 hours" '
+        f'style="width:100%;border-radius:8px;margin-top:0;display:block;"/>'
+        if chart_b64
+        else '<p style="color:#475569;font-size:11px;margin:0;">'  
+             'Price chart will appear after the first few data points are collected.</p>'
+    )
+
+    action_line = ''
+    if alert_context.get('action'):
+        ac = alert_context['action_color']
+        action_line = f'''
+        <div style="margin:0 0 20px;padding:12px 16px;
+                    background:{pct_bg};border-left:3px solid {ac};
+                    border-radius:0 6px 6px 0;">
+          <p style="margin:0;font-size:13px;color:{ac};font-weight:600;">
+            {alert_context['action']}
+          </p>
+        </div>'''
+
+    # Plain-text fallback
+    plain_text = (
+        f"{alert_context.get('label','RBOB Alert')}\n"
+        f"{'=' * 40}\n"
+        f"Price:        ${current_price:.4f} / gal\n"
+        f"Change:       {arrow} {pct_sign}{daily_pct:.2f}%  "
+        f"({pct_sign}${dollar_chg:.4f})\n"
+        f"Open:         ${open_price:.4f} / gal\n"
+        f"As of:        {now.strftime('%I:%M %p CT — %A, %b %d %Y')}\n"
+    )
+    if alert_context.get('action'):
+        plain_text += f"\n→ {alert_context['action']}\n"
+
+    html = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="margin:0;padding:20px 12px;background:#0a0f1e;
+             font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Arial,sans-serif;">
+
+  <div style="max-width:620px;margin:0 auto;">
+
+    <!-- Header -->
+    <div style="background:#0f172a;border-radius:12px 12px 0 0;
+                padding:16px 24px;border:1px solid #1e293b;border-bottom:none;">
+      <p style="margin:0;font-size:11px;color:#475569;letter-spacing:0.08em;text-transform:uppercase;">
+        /RB &nbsp;·&nbsp; RBOB Gasoline Futures &nbsp;·&nbsp; NYMEX CME
+      </p>
+      <p style="margin:4px 0 0;font-size:13px;color:#64748b;">
+        {now.strftime('%A, %B %-d, %Y &nbsp;·&nbsp; %-I:%M %p CT')}
+      </p>
+    </div>
+
+    <!-- Hero price card -->
+    <div style="background:#1e293b;padding:24px;border-left:1px solid #1e293b;
+                border-right:1px solid #1e293b;">
+
+      <p style="margin:0 0 4px;font-size:11px;color:#64748b;
+                letter-spacing:0.06em;text-transform:uppercase;">Current Price</p>
+      <p style="margin:0;font-size:48px;font-weight:700;color:#f1f5f9;
+                letter-spacing:-1px;line-height:1;">
+        ${current_price:.4f}
+        <span style="font-size:16px;color:#64748b;font-weight:400;">&nbsp;/ gal</span>
+      </p>
+
+      <!-- Change badge -->
+      <div style="display:inline-block;margin-top:12px;padding:6px 14px;
+                  background:{pct_bg};border-radius:20px;
+                  border:1px solid {pct_color}33;">
+        <span style="font-size:16px;font-weight:700;color:{pct_color};">
+          {arrow} {pct_sign}{daily_pct:.2f}%
+        </span>
+        <span style="font-size:13px;color:{pct_color};opacity:0.8;">
+          &nbsp;({pct_sign}${dollar_chg:.4f})
+        </span>
+        <span style="font-size:11px;color:#475569;">&nbsp; vs open</span>
+      </div>
+    </div>
+
+    <!-- Stats row -->
+    <div style="background:#162032;display:flex;border-left:1px solid #1e293b;
+                border-right:1px solid #1e293b;">
+
+      <div style="flex:1;padding:14px 20px;border-right:1px solid #1e293b;">
+        <p style="margin:0;font-size:10px;color:#475569;
+                  text-transform:uppercase;letter-spacing:0.06em;">Open</p>
+        <p style="margin:4px 0 0;font-size:16px;font-weight:600;color:#94a3b8;">
+          ${open_price:.4f}
+        </p>
+      </div>
+
+      <div style="flex:1;padding:14px 20px;border-right:1px solid #1e293b;">
+        <p style="margin:0;font-size:10px;color:#475569;
+                  text-transform:uppercase;letter-spacing:0.06em;">$ Change</p>
+        <p style="margin:4px 0 0;font-size:16px;font-weight:600;color:{pct_color};">
+          {pct_sign}${dollar_chg:.4f}
+        </p>
+      </div>
+
+      <div style="flex:1;padding:14px 20px;">
+        <p style="margin:0;font-size:10px;color:#475569;
+                  text-transform:uppercase;letter-spacing:0.06em;">Session</p>
+        <p style="margin:4px 0 0;font-size:16px;font-weight:600;color:#94a3b8;">
+          {'Higher' if is_up else 'Lower'}
+        </p>
+      </div>
+    </div>
+
+    <!-- Action banner (only for specific alert types) -->
+    {action_line}
+
+    <!-- Chart -->
+    <div style="background:#1e293b;padding:20px 24px {'16px' if not action_line else '0 24px 20px'};
+                border-left:1px solid #1e293b;border-right:1px solid #1e293b;">
+      <p style="margin:0 0 12px;font-size:10px;color:#475569;
+                text-transform:uppercase;letter-spacing:0.06em;">
+        Price History — Last 25 Hours
+      </p>
+      {chart_section}
+    </div>
+
+    <!-- Footer -->
+    <div style="background:#0f172a;border-radius:0 0 12px 12px;padding:12px 24px;
+                border:1px solid #1e293b;border-top:1px solid #0f172a;">
+      <p style="margin:0;font-size:10px;color:#334155;">
+        Automated by <a href="https://github.com/{GH_REPO}" style="color:#475569;
+        text-decoration:none;">armaanmoosani/rbob-fuel-tracker</a>
+        &nbsp;·&nbsp; GitHub Actions · Data via Charles Schwab Trader API
+      </p>
+    </div>
+
+  </div>
+</body>
+</html>
+"""
+    return cid, plain_text, html
+
+
+def send_email(
+    subject, current_price, open_price, daily_pct,
+    now, alert_context, chart_b64=None
+):
+    """Assemble and dispatch the HTML alert email."""
     try:
-        cid = uuid.uuid4().hex
-
-        # ---- Plain-text version (fallback) ----
-        plain = MIMEText(text_body, 'plain')
-
-        # ---- HTML version ----
-        chart_tag = (
-            f'<img src="cid:{cid}" alt="Price Chart" '
-            f'style="width:100%;border-radius:8px;margin-top:16px;" />'
-            if chart_b64 else
-            '<p style="color:#475569;font-size:12px;">Chart unavailable — not enough data yet.</p>'
+        cid, plain_text, html_body = build_html_email(
+            subject, current_price, open_price, daily_pct,
+            now, alert_context, chart_b64
         )
-        html_body = f"""
-        <html>
-        <body style="margin:0;padding:24px;background:#0f172a;
-                     font-family:'SF Mono','Courier New',monospace;color:#e2e8f0;">
-          <div style="max-width:680px;margin:0 auto;background:#1e293b;
-                      border-radius:12px;padding:24px;border:1px solid #334155;">
 
-            <h2 style="margin:0 0 4px;font-size:15px;
-                       color:#e2e8f0;letter-spacing:0.02em;">{subject}</h2>
-            <p style="margin:0 0 16px;font-size:11px;color:#475569;">
-              RBOB Gasoline Futures &nbsp;|&nbsp; Automated Alert
-            </p>
-
-            <pre style="background:#0f172a;padding:16px;border-radius:8px;
-                        font-size:13px;color:#94a3b8;
-                        margin:0;line-height:1.6;">{text_body}</pre>
-
-            {chart_tag}
-
-            <p style="margin:16px 0 0;font-size:10px;color:#334155;text-align:center;">
-              armaanmoosani/rbob-fuel-tracker &nbsp;|&nbsp; GitHub Actions
-            </p>
-          </div>
-        </body>
-        </html>
-        """
-
-        # Build the MIME message
         msg = MIMEMultipart('related')
         msg['Subject'] = subject
         msg['From']    = GMAIL_USER
         msg['To']      = TO_EMAIL
 
         alt = MIMEMultipart('alternative')
-        alt.attach(plain)
-        alt.attach(MIMEText(html_body, 'html'))
+        alt.attach(MIMEText(plain_text, 'plain'))
+        alt.attach(MIMEText(html_body,  'html'))
         msg.attach(alt)
 
         if chart_b64:
@@ -261,12 +381,18 @@ def mark_sent_today(key):
         print(f"⚠️  Could not record sent state for {key}: {e}")
 
 
-def send_once_today(key, subject, text_body, chart_b64=None):
+def send_once_today(
+    key, subject, current_price, open_price, daily_pct,
+    now, alert_context, chart_b64=None
+):
     """Send an alert at most once per calendar day for the given key."""
     if already_sent_today(key):
         print(f"⏭️  Skipping '{key}' — already sent today")
         return
-    send_email(subject, text_body, chart_b64)
+    send_email(
+        subject, current_price, open_price, daily_pct,
+        now, alert_context, chart_b64
+    )
     mark_sent_today(key)
 
 
@@ -327,13 +453,27 @@ try:
     new_refresh    = auth_json['refresh_token']
     print("✅ Schwab OAuth refreshed")
 except Exception as e:
-    send_email(
-        "🚨 EMERGENCY: RBOB Tracker Auth Failed!",
-        f"OAuth token refresh failed — tracker is DOWN.\n\n"
-        f"Error: {e}\n\n"
-        f"ACTION REQUIRED: Re-authenticate at developer.schwab.com\n"
-        f"and update SCHWAB_REFRESH_TOKEN in GitHub Secrets."
-    )
+    # Emergency plain-text alert — send directly without the full HTML builder
+    # since we don't have market data yet at this point
+    try:
+        msg = MIMEText(
+            f"OAuth token refresh failed — tracker is DOWN.\n\n"
+            f"Error: {e}\n\n"
+            f"ACTION REQUIRED:\n"
+            f"1. Go to developer.schwab.com\n"
+            f"2. Complete the OAuth handshake\n"
+            f"3. Update SCHWAB_REFRESH_TOKEN in GitHub Secrets."
+        )
+        msg['Subject'] = "🚨 EMERGENCY: RBOB Tracker Auth Failed!"
+        msg['From']    = GMAIL_USER
+        msg['To']      = TO_EMAIL
+        srv = smtplib.SMTP('smtp.gmail.com', 587)
+        srv.starttls()
+        srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+        srv.sendmail(GMAIL_USER, TO_EMAIL, msg.as_string())
+        srv.quit()
+    except Exception:
+        pass
     print(f"❌ FATAL: OAuth refresh failed: {e}")
     sys.exit(1)
 
@@ -341,13 +481,23 @@ except Exception as e:
 try:
     update_github_secret(new_refresh)
 except Exception as e:
-    send_email(
-        "🚨 EMERGENCY: GitHub Secret Update Failed!",
-        f"New Schwab token obtained but FAILED to save.\n\n"
-        f"Error: {e}\n\n"
-        f"⚠️  Tracker WILL break on next run.\n"
-        f"Manually update SCHWAB_REFRESH_TOKEN in GitHub Secrets NOW."
-    )
+    try:
+        msg = MIMEText(
+            f"New Schwab token obtained but FAILED to save to GitHub Secrets.\n\n"
+            f"Error: {e}\n\n"
+            f"⚠️  The tracker WILL break on the next run.\n"
+            f"Manually update SCHWAB_REFRESH_TOKEN in GitHub Secrets NOW."
+        )
+        msg['Subject'] = "🚨 EMERGENCY: GitHub Secret Update Failed!"
+        msg['From']    = GMAIL_USER
+        msg['To']      = TO_EMAIL
+        srv = smtplib.SMTP('smtp.gmail.com', 587)
+        srv.starttls()
+        srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+        srv.sendmail(GMAIL_USER, TO_EMAIL, msg.as_string())
+        srv.quit()
+    except Exception:
+        pass
     print(f"❌ FATAL: GitHub secret update failed: {e}")
     sys.exit(1)
 
@@ -379,21 +529,9 @@ history = load_price_history()
 history = append_price(history, now, current_price)
 save_price_history(history)
 
-# --- Build email body ---
-arrow = "▲" if daily_pct >= 0 else "▼"
-message_body = (
-    f"Price:        ${current_price:.4f} / gal\n"
-    f"Daily Change: {arrow} {daily_pct:+.2f}%\n"
-    f"Open:         ${open_price:.4f} / gal\n"
-    f"Market Time:  {now.strftime('%-I:%M %p CT, %b %-d %Y')}"
-)
-
 # --- Generate chart ---
 chart = generate_chart(history, current_price, open_price, daily_pct)
-if chart:
-    print("✅ Chart generated")
-else:
-    print("⚠️  Not enough history for chart yet")
+print("✅ Chart generated" if chart else "⚠️  Not enough history for chart yet")
 
 # ===========================================================================
 # Alert Logic  — each key fires at most once per calendar day
@@ -401,38 +539,69 @@ else:
 
 # 3% swing alert — checked every run, deduped per day
 if abs(daily_pct) >= 3.0:
-    direction = "▲ UP" if daily_pct > 0 else "▼ DOWN"
+    pct_sign  = '+' if daily_pct > 0 else ''
+    direction = 'higher' if daily_pct > 0 else 'lower'
+    buy_note  = (
+        'Prices are rising — consider whether to lock in supply now or wait.'
+        if daily_pct > 0 else
+        'Prices are falling — may be a good opportunity to buy ahead of rack pricing.'
+    )
     send_once_today(
-        "SWING3",
-        f"🚨 MAJOR MOVE: /RB {direction} {daily_pct:+.2f}%",
-        message_body,
-        chart
+        key='SWING3',
+        subject=f"🚨 /RB Major Move: {pct_sign}{daily_pct:.2f}% — ${current_price:.4f}/gal",
+        current_price=current_price, open_price=open_price, daily_pct=daily_pct,
+        now=now,
+        alert_context={
+            'label': 'Major Price Swing',
+            'action': buy_note,
+            'action_color': '#22c55e' if daily_pct < 0 else '#f97316',
+        },
+        chart_b64=chart
     )
 
 # 5:30 PM rack-price window (±7 min buffer for cron delays)
 elif now.hour == 17 and 23 <= now.minute < 38:
     send_once_today(
-        "RACK_530",
-        "⏰ 5:30 PM — Check Supplier App Now",
-        message_body,
-        chart
+        key='RACK_530',
+        subject=f"⏰ Rack Window Open — /RB ${current_price:.4f}/gal ({daily_pct:+.2f}%)",
+        current_price=current_price, open_price=open_price, daily_pct=daily_pct,
+        now=now,
+        alert_context={
+            'label': '5:30 PM Rack Price Window',
+            'action': 'Rack prices go effective at 7:00 PM CT. Open your supplier app now to compare and decide.',
+            'action_color': '#f59e0b',
+        },
+        chart_b64=chart
     )
 
 # 1:30 PM settlement alert (±7 min buffer)
 elif now.hour == 13 and 23 <= now.minute < 38:
     send_once_today(
-        "SETTLE_130",
-        "📊 1:30 PM — /RB Daily Settlement Price",
-        message_body,
-        chart
+        key='SETTLE_130',
+        subject=f"📊 /RB Settled at ${current_price:.4f}/gal ({daily_pct:+.2f}%)",
+        current_price=current_price, open_price=open_price, daily_pct=daily_pct,
+        now=now,
+        alert_context={
+            'label': '1:30 PM Daily Settlement',
+            'action': 'This is the official CME daily settlement price. Rack prices this evening will likely reflect this level.',
+            'action_color': '#60a5fa',
+        },
+        chart_b64=chart
     )
 
 # 6-hour status updates (8-min buffer)
 elif now.hour in [0, 6, 12, 18] and 0 <= now.minute < 8:
-    hour_key = f"UPDATE_{now.strftime('%H')}"
+    hour_key   = f"UPDATE_{now.strftime('%H')}"
+    time_label = now.strftime('%-I %p')
     send_once_today(
-        hour_key,
-        f"⏱️ {now.strftime('%-I %p')} — /RB 6-Hour Update",
-        message_body,
-        chart
+        key=hour_key,
+        subject=f"⏱️ {time_label} Update — /RB ${current_price:.4f}/gal ({daily_pct:+.2f}%)",
+        current_price=current_price, open_price=open_price, daily_pct=daily_pct,
+        now=now,
+        alert_context={
+            'label': f'{time_label} 6-Hour Update',
+            'action': '',   # No specific action cue for routine updates
+            'action_color': '#94a3b8',
+        },
+        chart_b64=chart
     )
