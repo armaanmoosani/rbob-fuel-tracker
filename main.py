@@ -803,7 +803,8 @@ current_price = open_price = high_price = low_price = None
 
 try:
     quote_res = requests.get(
-        "https://api.schwabapi.com/marketdata/v1/quotes?symbols=/RB",
+        "https://api.schwabapi.com/marketdata/v1/quotes",
+        params={"symbols": "/RB"},
         headers={"Authorization": f"Bearer {access_token}"},
         timeout=15
     )
