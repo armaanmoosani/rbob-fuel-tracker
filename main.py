@@ -798,21 +798,32 @@ current_price = open_price = high_price = low_price = None
 
 quote_res = None
 try:
+    # Query /RB, /RBM26, and /RBN26 to diagnose the mapping and prices
     quote_res = requests.get(
         "https://api.schwabapi.com/marketdata/v1/quotes",
-        params={"symbols": "/RB"},
+        params={"symbols": "/RB,/RBM26,/RBN26"},
         headers={"Authorization": f"Bearer {access_token}"},
         timeout=15
     )
     quote_res.raise_for_status()
     
     res_json = quote_res.json()
+    print("DEBUG: Schwab response keys: " + str(list(res_json.keys())))
+    for k, v in res_json.items():
+        desc = v.get('reference', {}).get('description', '')
+        last_price = v.get('quote', {}).get('lastPrice', 0.0)
+        net_change = v.get('quote', {}).get('netChange', 0.0)
+        pct_change = v.get('quote', {}).get('futurePercentChange', 0.0)
+        print(f"DEBUG: Symbol: {k} | Desc: {desc} | Price: {last_price} | Change: {net_change} ({pct_change}%)")
+        
     key = None
     if '/RB' in res_json:
         key = '/RB'
     else:
         rb_keys = [k for k in res_json.keys() if k.startswith('/RB')]
         if rb_keys:
+            # Let's see if we should prefer /RBM26 if it is in the response, or how they are sorted
+            print(f"DEBUG: Found rb_keys: {rb_keys}")
             key = rb_keys[0]
         elif len(res_json) == 1:
             key = list(res_json.keys())[0]
