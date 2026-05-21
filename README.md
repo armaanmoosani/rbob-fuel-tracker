@@ -24,7 +24,7 @@ The email reports are generated with pure Python (`matplotlib` + `email.mime`) a
 
 ---
 
-## 🚀 Setup & Deployment
+## Setup & Deployment
 
 To run this in your own GitHub account:
 
