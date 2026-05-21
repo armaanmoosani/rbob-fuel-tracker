@@ -560,7 +560,7 @@ if abs(daily_pct) >= 3.0:
     )
 
 # 5:30 PM rack-price window (±7 min buffer for cron delays)
-elif now.hour == 17 and 23 <= now.minute < 38:
+if now.hour == 17 and 23 <= now.minute < 38:
     send_once_today(
         key='RACK_530',
         subject=f"⏰ Rack Window Open — /RB ${current_price:.4f}/gal ({daily_pct:+.2f}%)",
@@ -575,7 +575,7 @@ elif now.hour == 17 and 23 <= now.minute < 38:
     )
 
 # 1:30 PM settlement alert (±7 min buffer)
-elif now.hour == 13 and 23 <= now.minute < 38:
+if now.hour == 13 and 23 <= now.minute < 38:
     send_once_today(
         key='SETTLE_130',
         subject=f"📊 /RB Settled at ${current_price:.4f}/gal ({daily_pct:+.2f}%)",
@@ -590,7 +590,7 @@ elif now.hour == 13 and 23 <= now.minute < 38:
     )
 
 # 6-hour status updates (8-min buffer)
-elif now.hour in [0, 6, 12, 18] and 0 <= now.minute < 8:
+if now.hour in [0, 6, 12, 18] and 0 <= now.minute < 8:
     hour_key   = f"UPDATE_{now.strftime('%H')}"
     time_label = now.strftime('%-I %p')
     send_once_today(
