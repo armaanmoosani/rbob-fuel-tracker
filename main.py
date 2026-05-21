@@ -970,8 +970,8 @@ if now.hour == 13 and now.minute >= 23:
         **ctx
     )
 
-# 4. 6-hour status updates (8-min buffer)
-if now.hour in [0, 6, 12, 18] and 0 <= now.minute < 8:
+# 4. 6-hour status updates (widened window to handle GitHub Actions cron delays)
+if now.hour in [0, 6, 12, 18]:
     hour_key   = f"UPDATE_{now.strftime('%H')}"
     time_label = now.strftime('%-I %p')
     send_once_today(
