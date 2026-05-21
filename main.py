@@ -796,6 +796,7 @@ except Exception as e:
 data_source   = None
 current_price = open_price = high_price = low_price = None
 
+quote_res = None
 try:
     quote_res = requests.get(
         "https://api.schwabapi.com/marketdata/v1/quotes",
@@ -813,6 +814,12 @@ try:
     print("Market data: Schwab real-time")
 except Exception as schwab_err:
     print(f"Schwab market data failed ({schwab_err}) — falling back to yfinance")
+    if quote_res is not None:
+        print(f"DEBUG: Schwab HTTP status code: {quote_res.status_code}")
+        try:
+            print(f"DEBUG: Schwab Response body: {quote_res.text}")
+        except Exception:
+            pass
 
 if data_source is None:
     import time
