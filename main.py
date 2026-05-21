@@ -209,7 +209,7 @@ def generate_intraday_chart(history, current_price, open_price, high_price, low_
     grid_color = '#e2e8f0'
     text_color = '#64748b'
 
-    fig, ax = plt.subplots(figsize=(10, 4.0))
+    fig, ax = plt.subplots(figsize=(12, 5.5))
     fig.patch.set_facecolor(bg_dark)
     ax.set_facecolor(bg_panel)
 
@@ -247,15 +247,15 @@ def generate_intraday_chart(history, current_price, open_price, high_price, low_
     # Axes
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%-I:%M %p', tz=TZ))
     ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-    plt.xticks(rotation=0, ha='center', color=text_color, fontsize=8)
-    plt.yticks(color=text_color, fontsize=8)
-    ax.set_ylabel('$/gal', color=text_color, fontsize=9)
+    plt.xticks(rotation=0, ha='center', color=text_color, fontsize=10)
+    plt.yticks(color=text_color, fontsize=10)
+    ax.set_ylabel('$/gal', color=text_color, fontsize=11)
 
     pct_sign = '+' if is_up else ''
     ax.set_title(
         f'Wholesale Gas (/RB) Intraday   {pct_sign}{daily_pct:.2f}% vs open   '
         f'as of {times[-1].strftime("%-I:%M %p CT")}',
-        color='#e2e8f0', fontsize=11, fontweight='bold', pad=10
+        color='#e2e8f0', fontsize=13, fontweight='bold', pad=12
     )
 
     for spine in ax.spines.values():
@@ -265,7 +265,7 @@ def generate_intraday_chart(history, current_price, open_price, high_price, low_
 
     plt.tight_layout()
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=bg_dark)
+    plt.savefig(buf, format='png', dpi=180, bbox_inches='tight', facecolor=bg_dark)
     plt.close()
     buf.seek(0)
     return base64.b64encode(buf.read()).decode()
@@ -295,7 +295,7 @@ def generate_5day_chart(history_5d, current_price):
     text_muted = '#64748b'
     line_color = '#60a5fa'   # neutral blue — not directional
 
-    fig, ax = plt.subplots(figsize=(10, 2.8))
+    fig, ax = plt.subplots(figsize=(12, 4.0))
     fig.patch.set_facecolor(bg_dark)
     ax.set_facecolor(bg_panel)
 
@@ -309,10 +309,10 @@ def generate_5day_chart(history_5d, current_price):
     # Day separators
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%a', tz=TZ))
     ax.xaxis.set_major_locator(mdates.DayLocator(tz=TZ))
-    plt.xticks(rotation=0, ha='center', color=text_color, fontsize=8)
-    plt.yticks(color=text_color, fontsize=8)
-    ax.set_ylabel('$/gal', color=text_color, fontsize=9)
-    ax.set_title('5-Day Price Trend', color='#e2e8f0', fontsize=10, fontweight='bold', pad=8)
+    plt.xticks(rotation=0, ha='center', color=text_color, fontsize=10)
+    plt.yticks(color=text_color, fontsize=10)
+    ax.set_ylabel('$/gal', color=text_color, fontsize=11)
+    ax.set_title('5-Day Price Trend', color='#e2e8f0', fontsize=13, fontweight='bold', pad=10)
 
     for spine in ax.spines.values():
         spine.set_edgecolor(grid_color)
@@ -323,7 +323,7 @@ def generate_5day_chart(history_5d, current_price):
 
     plt.tight_layout()
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor=bg_dark)
+    plt.savefig(buf, format='png', dpi=180, bbox_inches='tight', facecolor=bg_dark)
     plt.close()
     buf.seek(0)
     return base64.b64encode(buf.read()).decode()
@@ -682,31 +682,30 @@ def send_sms(current_price, open_price, high_price, low_price, daily_pct, now, a
     if not TO_PHONE_SMS:
         return  # Secret not configured — skip silently
 
-    pct_sign   = '+' if daily_pct >= 0 else ''
-    arrow      = '\u25b2' if daily_pct >= 0 else '\u25bc'
-    dollar_chg = current_price - open_price
-    label      = alert_context.get('label', 'Update')
-    time_str   = now.strftime('%-I:%M %p CT')
+    pct_sign = '+' if daily_pct >= 0 else ''
+    direction = 'UP' if daily_pct >= 0 else 'DOWN'
+    label     = alert_context.get('label', 'Update')
+    time_str  = now.strftime('%-I:%M %p CT')
 
-    # Build a compact single-line summary that fits in 160 chars
-    h_str = f'H:${high_price:.4f} ' if high_price > 0 else ''
-    l_str = f'L:${low_price:.4f} ' if low_price > 0 else ''
-    body = (
-        f"/RB {arrow} ${current_price:.4f} {pct_sign}{daily_pct:.2f}% "
-        f"({pct_sign}${dollar_chg:.4f}) | "
-        f"{h_str}{l_str}| {time_str}"
-    )
-    # Prefix swing alerts so they stand out in the SMS thread
-    if 'Swing' in label or 'Movement' in label or 'swing' in label:
-        body = f"\U0001f6a8 SWING {body}"
+    # Determine a short, professional alert type (no emojis)
+    if 'Swing' in label or 'Movement' in label:
+        alert_type = 'PRICE ALERT'
     elif 'Rack' in label:
-        body = f"\u23f0 RACK {body}"
+        alert_type = 'RACK WINDOW'
     elif 'Settlement' in label:
-        body = f"\U0001f4ca SETTLE {body}"
+        alert_type = 'SETTLEMENT'
+    else:
+        alert_type = 'UPDATE'
+
+    # 3-line professional format
+    line1 = f"/RB {alert_type}"
+    line2 = f"${current_price:.4f}  {direction} {pct_sign}{daily_pct:.2f}%"
+    line3 = time_str
+    body  = f"{line1}\n{line2}\n{line3}"
 
     try:
-        sms_msg = MIMEText(body[:320])   # carrier may concatenate two segments if needed
-        sms_msg['Subject'] = ''          # subject shows as part of body on most carriers
+        sms_msg = MIMEText(body)
+        sms_msg['Subject'] = ''
         sms_msg['From']    = GMAIL_USER
         sms_msg['To']      = TO_PHONE_SMS
 
