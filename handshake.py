@@ -51,7 +51,7 @@ if "code=" in redirected_input:
     code = query_params.get("code", [None])[0]
 
 if not code:
-    print("❌ Failed to extract authorization code. Make sure you pasted the full redirect URL.")
+    print("[ERROR] Failed to extract authorization code. Make sure you pasted the full redirect URL.")
     exit(1)
 
 # 4. Exchange the authorization code for tokens
@@ -77,16 +77,16 @@ try:
     
     refresh_token = tokens.get("refresh_token")
     if refresh_token:
-        print("\n🎉 SUCCESS! Here is your initial Schwab Refresh Token:\n")
+        print("\n[SUCCESS] Here is your initial Schwab Refresh Token:\n")
         print("======================================================================")
         print(refresh_token)
         print("======================================================================")
         print("\nCopy the entire text above and add it to your GitHub Repository Secrets")
         print("as: SCHWAB_REFRESH_TOKEN\n")
     else:
-        print("❌ Schwab responded successfully, but did not return a refresh token.")
+        print("[ERROR] Schwab responded successfully, but did not return a refresh token.")
         print(f"Response: {tokens}")
 except Exception as e:
-    print(f"❌ Exchange failed. Error: {e}")
+    print(f"[ERROR] Exchange failed. Error: {e}")
     if 'res' in locals():
         print(f"Schwab Response: {res.text}")
