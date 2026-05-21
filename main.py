@@ -555,7 +555,7 @@ def send_email(subject, all_data, now, alert_context):
     send_sms(all_data, now, alert_context)
 
 def send_once_today(key, subject, all_data, now, alert_context):
-    session_str = get_session_date_str(now)
+    session_str = get_session_date_str(now).replace('-', '_')
     db_key = f"SENT_{key}_{session_str}"
     
     if get_repo_variable(db_key):
