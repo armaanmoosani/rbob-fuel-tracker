@@ -667,8 +667,6 @@ def build_html_email(
 </html>"""
 
     return cid_intra, cid_5d, plain_text, html
-
-
 # ---------------------------------------------------------------------------
 # SMS Dispatch  (free via carrier email-to-SMS gateway)
 # ---------------------------------------------------------------------------
@@ -677,17 +675,17 @@ def send_sms(current_price, open_price, high_price, low_price, daily_pct, now, a
     """
     Send a concise text message via the carrier's free email-to-SMS gateway.
     Verizon: phonenumber@vtext.com  (set as GitHub Secret PHONE_SMS_ADDRESS)
-    Carrier limits: ~160 chars per message segment, plain text only, no attachments.
+    Format: 4 clean lines — alert type, price/change, high/low, time.
     """
     if not TO_PHONE_SMS:
         return  # Secret not configured — skip silently
 
-    pct_sign = '+' if daily_pct >= 0 else ''
+    pct_sign  = '+' if daily_pct >= 0 else ''
     direction = 'UP' if daily_pct >= 0 else 'DOWN'
     label     = alert_context.get('label', 'Update')
     time_str  = now.strftime('%-I:%M %p CT')
 
-    # Determine a short, professional alert type (no emojis)
+    # Determine a short, professional alert type
     if 'Swing' in label or 'Movement' in label:
         alert_type = 'PRICE ALERT'
     elif 'Rack' in label:
@@ -697,11 +695,17 @@ def send_sms(current_price, open_price, high_price, low_price, daily_pct, now, a
     else:
         alert_type = 'UPDATE'
 
-    # 3-line professional format
-    line1 = f"/RB {alert_type}"
-    line2 = f"${current_price:.4f}  {direction} {pct_sign}{daily_pct:.2f}%"
-    line3 = time_str
-    body  = f"{line1}\n{line2}\n{line3}"
+    # Build the 4-line SMS body
+    lines = []
+    lines.append(f"{alert_type} • /RB")
+    lines.append(f"Now: ${current_price:.4f}  {direction} {pct_sign}{daily_pct:.2f}%")
+    
+    if high_price > 0 and low_price > 0:
+        lines.append(f"Day H: ${high_price:.4f}  L: ${low_price:.4f}")
+        
+    lines.append(f"As of: {time_str}")
+
+    body = "\n".join(lines)
 
     try:
         sms_msg = MIMEText(body)
@@ -722,6 +726,8 @@ def send_sms(current_price, open_price, high_price, low_price, daily_pct, now, a
 # ---------------------------------------------------------------------------
 # Email Dispatch
 # ---------------------------------------------------------------------------
+
+
 
 def send_email(
     subject, current_price, open_price, high_price, low_price, daily_pct,
