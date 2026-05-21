@@ -1,12 +1,12 @@
-# RBOB Fuel Tracker
+# RBOB & HO Fuel Tracker
 
-An autonomous, serverless market tracker designed for independent gas stations and fuel buyers. This system continuously monitors CME RBOB Wholesale Gasoline futures (`/RB`) and generates professional, chart-rich email alerts exactly when fuel procurement decisions need to be made.
+An autonomous, serverless market tracker designed for independent gas stations and fuel buyers. This system continuously monitors CME RBOB Wholesale Gasoline futures (`/RB`) and NYMEX ULSD Diesel futures (`/HO`), and generates professional, chart-rich email and SMS alerts exactly when fuel procurement decisions need to be made.
 
 ## Features
 
 - **Serverless Architecture**: Runs entirely on GitHub Actions via a 5-minute cron schedule. No servers to maintain.
-- **Charles Schwab API Integration**: Pulls live `/RB` futures data.
-- **Robust Fallback**: Automatically falls back to Yahoo Finance (`RB=F`) if the primary broker API experiences downtime.
+- **Charles Schwab API Integration**: Pulls live `/RB` (Gasoline) and `/HO` (Diesel) futures data.
+- **Robust Fallback**: Automatically falls back to Yahoo Finance (`RB=F` and `HO=F`) if the primary broker API experiences downtime.
 - **Self-Healing OAuth**: Handles 7-day token expirations by automatically requesting new refresh tokens and securely rotating them back into GitHub Secrets using PyNaCl.
 - **Accurate CME Session Tracking**: Correctly calculates "Intraday" charts across midnight boundaries by respecting the true 5:00 PM CT to 4:00 PM CT CME trading session.
 - **Smart Alerts**: 
