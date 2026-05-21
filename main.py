@@ -64,31 +64,61 @@ def get_session_date_str(dt):
 # ---------------------------------------------------------------------------
 # Dynamic Front-Month Futures Symbol Resolution
 # ---------------------------------------------------------------------------
-MONTH_CODES = {
-    1: 'G', 2: 'H', 3: 'J', 4: 'K', 5: 'M', 6: 'N',
-    7: 'Q', 8: 'U', 9: 'V', 10: 'X', 11: 'Z', 12: 'F'
+# Standard CME delivery-month codes (letter maps to delivery month, not current month)
+DELIVERY_MONTH_CODES = {
+    1: 'F', 2: 'G', 3: 'H', 4: 'J', 5: 'K', 6: 'M',
+    7: 'N', 8: 'Q', 9: 'U', 10: 'V', 11: 'X', 12: 'Z'
 }
 
-def get_futures_symbols(dt):
+def get_front_month_schwab_symbol(dt):
     """
-    Returns (schwab_symbol, yfinance_symbol) for the active front-month contract.
+    Returns the Schwab-specific front-month RBOB contract symbol (e.g. '/RBN26').
+
+    RBOB futures last trading day (LTD) = last business day of the month preceding
+    the delivery month.  Traders typically roll ~10+ calendar days before LTD, so
+    we advance to the next contract once we are within 10 days of the current
+    candidate's LTD.  This matches the real-world roll schedule.
+
+    Example (May 21 2026):
+      - M26 (June delivery) LTD = May 29  →  8 days away  →  too close, roll forward
+      - N26 (July delivery)  LTD = Jun 30  →  40 days away →  use /RBN26  ✓
     """
-    import datetime
-    if dt.hour >= 17:
-        trade_date = (dt + datetime.timedelta(days=1)).date()
-    else:
-        trade_date = dt.date()
-        
-    month = trade_date.month
-    year = trade_date.year
-    
-    code = MONTH_CODES[month]
-    contract_year = year + 1 if month == 12 else year
-    year_suffix = str(contract_year)[-2:]
-    
-    schwab_symbol = f"/RB{code}{year_suffix}"
-    yfinance_symbol = f"RB{code}{year_suffix}.NYM"
-    return schwab_symbol, yfinance_symbol
+    import calendar
+    from datetime import date, timedelta
+
+    today = dt.date()
+
+    # Start from delivery month = current calendar month + 1
+    candidate_month = today.month + 1
+    candidate_year  = today.year
+    if candidate_month > 12:
+        candidate_month = 1
+        candidate_year += 1
+
+    for _ in range(14):          # safety cap — never iterate more than 14 months
+        # LTD = last business day of the month PRECEDING delivery
+        prev_month = candidate_month - 1
+        prev_year  = candidate_year
+        if prev_month == 0:
+            prev_month = 12
+            prev_year -= 1
+
+        last_day_of_prev = calendar.monthrange(prev_year, prev_month)[1]
+        ltd = date(prev_year, prev_month, last_day_of_prev)
+        while ltd.weekday() >= 5:          # step back to last business day
+            ltd -= timedelta(days=1)
+
+        if (ltd - today).days > 10:
+            break                          # this candidate is far enough ahead
+
+        # Too close — advance to next delivery month
+        candidate_month += 1
+        if candidate_month > 12:
+            candidate_month = 1
+            candidate_year += 1
+
+    code = DELIVERY_MONTH_CODES[candidate_month]
+    return f"/RB{code}{candidate_year % 100:02d}"
 
 
 # ---------------------------------------------------------------------------
@@ -826,9 +856,9 @@ except Exception as e:
 data_source   = None
 current_price = open_price = high_price = low_price = None
 
-# Dynamically resolve Schwab and yfinance symbols for the current CME front-month contract
-schwab_symbol, yf_symbol = get_futures_symbols(now)
-print(f"Targeting front-month symbols — Schwab: {schwab_symbol} | yfinance: {yf_symbol}")
+# Resolve the active front-month Schwab contract symbol (roll-aware, e.g. /RBN26)
+schwab_symbol = get_front_month_schwab_symbol(now)
+print(f"Targeting front-month symbol — Schwab: {schwab_symbol} | yfinance: RB=F (continuous)")
 
 quote_res = None
 try:
@@ -869,7 +899,8 @@ if data_source is None:
     import time
     for attempt in range(3):
         try:
-            rb_yf         = yf.Ticker(yf_symbol)
+            # RB=F is yfinance's continuous front-month symbol — no manual roll needed
+            rb_yf         = yf.Ticker("RB=F")
             fi            = rb_yf.fast_info
             current_price = float(fi['last_price'])
             hist          = rb_yf.history(period='1d', interval='5m')
@@ -882,7 +913,7 @@ if data_source is None:
                 high_price = 0.0
                 low_price  = 0.0
             data_source = 'yfinance'
-            print(f"Market data: yfinance fallback ({yf_symbol}, ~15 min delayed)")
+            print("Market data: yfinance fallback (RB=F continuous, ~15 min delayed)")
             break
         except Exception as yf_err:
             err_str = str(yf_err)
