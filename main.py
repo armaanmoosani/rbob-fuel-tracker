@@ -17,9 +17,6 @@ import requests
 import pytz
 import yfinance as yf
 
-# ---------------------------------------------------------------------------
-# Environment Variables
-# ---------------------------------------------------------------------------
 SCHWAB_APP_KEY       = os.environ['SCHWAB_APP_KEY']
 SCHWAB_APP_SECRET    = os.environ['SCHWAB_APP_SECRET']
 SCHWAB_REFRESH_TOKEN = os.environ['SCHWAB_REFRESH_TOKEN']
@@ -50,9 +47,6 @@ COMMODITIES = {
     }
 }
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 def get_session_start(dt):
     import datetime
     if dt.hour >= 17:
@@ -167,9 +161,6 @@ def append_price(history, ts, price):
     filtered.append({"t": ts.isoformat(), "p": round(price, 4)})
     return filtered
 
-# ---------------------------------------------------------------------------
-# Charts
-# ---------------------------------------------------------------------------
 def generate_intraday_chart(history, current_price, open_price, high_price, low_price, daily_pct, commodity_name):
     if len(history) < 3:
         return None
@@ -265,9 +256,6 @@ def generate_5day_chart(history_5d, current_price):
     buf.seek(0)
     return base64.b64encode(buf.read()).decode()
 
-# ---------------------------------------------------------------------------
-# Email Builder
-# ---------------------------------------------------------------------------
 def build_html_block(prefix, info, now):
     cid_intra = uuid.uuid4().hex
     cid_5d    = uuid.uuid4().hex
@@ -568,13 +556,9 @@ def send_once_today(key, subject, all_data, now, alert_context):
     except Exception as e:
         print(f"Warning: could not save lock {db_key}: {e}")
 
-# ---------------------------------------------------------------------------
-# MAIN EXECUTION
-# ---------------------------------------------------------------------------
 if __name__ == "__main__":
     now = datetime.now(TZ)
     
-    # 1. OAuth
     auth_header = base64.b64encode(f"{SCHWAB_APP_KEY}:{SCHWAB_APP_SECRET}".encode()).decode()
     try:
         auth_res = requests.post(
@@ -597,13 +581,11 @@ if __name__ == "__main__":
         print(f"FATAL: GitHub secret update failed: {e}")
         sys.exit(1)
 
-    # 2. Fetch data for RB and HO
     all_data = {}
     for prefix, cfg in COMMODITIES.items():
         schwab_symbol = get_front_month_schwab_symbol(now, prefix)
         print(f"[{prefix}] Targeting front-month: Schwab {schwab_symbol} | yf {cfg['yf_symbol']}")
         
-        # Schwab quote
         current_price = open_price = high_price = low_price = None
         data_source = None
         try:
@@ -657,7 +639,6 @@ if __name__ == "__main__":
         if not open_price: open_price = current_price
         daily_pct = ((current_price - open_price) / open_price) * 100
         
-        # Context 5d/30d
         yesterday_close = five_day_high = five_day_low = thirty_day_avg = None
         history_5d = []
         try:
@@ -676,12 +657,10 @@ if __name__ == "__main__":
         except Exception:
             pass
 
-        # Intraday tracking
         history_intra = load_price_history(prefix)
         history_intra = append_price(history_intra, now, current_price)
         save_price_history(history_intra, prefix)
         
-        # Charts
         chart_intra = generate_intraday_chart(history_intra, current_price, open_price, high_price, low_price, daily_pct, cfg['name'])
         chart_5d = generate_5day_chart(history_5d, current_price)
         
@@ -700,10 +679,8 @@ if __name__ == "__main__":
         }
         print(f"[{prefix}] Fetched: ${current_price:.4f} ({daily_pct:+.2f}%)")
 
-    # 3. Alerts
     session_str = get_session_date_str(now)
     
-    # 3.1 Swing Alert
     any_swing = False
     swing_strs = []
     swing_colors = []
@@ -746,7 +723,6 @@ if __name__ == "__main__":
             }
         )
 
-    # 3.2 Rack Window (5:30 PM CT)
     if now.hour == 17 and now.minute >= 23:
         send_once_today('RACK_530', "Rack Pricing Window", all_data, now, {
             'label': 'Rack Pricing Window — 5:30 PM CT',
@@ -754,7 +730,6 @@ if __name__ == "__main__":
             'action_color': '#f59e0b'
         })
 
-    # 3.3 Settlement (1:30 PM CT)
     if now.hour == 13 and now.minute >= 23:
         send_once_today('SETTLE_130', "CME Settlement", all_data, now, {
             'label': 'CME Daily Settlement — 1:30 PM CT',
@@ -762,7 +737,6 @@ if __name__ == "__main__":
             'action_color': '#60a5fa'
         })
 
-    # 3.4 Scheduled Updates
     if now.hour in [0, 6, 12, 18]:
         send_once_today(f"UPDATE_{now.strftime('%H')}", f"Market Update — {now.strftime('%-I %p')}", all_data, now, {
             'label': f'Scheduled Market Update — {now.strftime("%-I:%M %p CT")}',
