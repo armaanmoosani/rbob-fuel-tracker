@@ -192,26 +192,26 @@ def generate_intraday_chart(history, current_price, open_price, high_price, low_
     if open_price:
         ax.axhline(open_price, color='#94a3b8', linestyle='--', linewidth=1, zorder=2)
         ax.annotate(f' Open: ${open_price:.4f}', xy=(times[0], open_price),
-                    color='#94a3b8', fontsize=8, va='bottom', ha='left')
+                    color='#94a3b8', fontsize=14, va='bottom', ha='left')
 
     ax.plot(times, prices, color=line_color, linewidth=2.5, zorder=4)
     ax.fill_between(times, min(prices) if min(prices) < open_price else open_price, prices,
                     alpha=0.10, color=line_color, zorder=2)
     ax.scatter([times[-1]], [prices[-1]], color='#22c55e', s=60, zorder=5, linewidths=0)
     ax.annotate(f'  ${current_price:.4f}', xy=(times[-1], prices[-1]),
-                color='#22c55e', fontsize=9, fontweight='bold', va='center')
+                color='#22c55e', fontsize=18, fontweight='bold', va='center')
 
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%-I:%M %p', tz=TZ))
     ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-    plt.xticks(rotation=0, ha='center', color=text_color, fontsize=10)
-    plt.yticks(color=text_color, fontsize=10)
-    ax.set_ylabel('$/gal', color=text_color, fontsize=11)
+    plt.xticks(rotation=0, ha='center', color=text_color, fontsize=14)
+    plt.yticks(color=text_color, fontsize=14)
+    ax.set_ylabel('$/gal', color=text_color, fontsize=16)
 
     pct_sign = '+' if is_up else ''
     ax.set_title(
         f'{commodity_name} Intraday   {pct_sign}{daily_pct:.2f}% vs open   '
         f'as of {times[-1].strftime("%-I:%M %p CT")}',
-        color='#e2e8f0', fontsize=13, fontweight='bold', pad=12
+        color='#e2e8f0', fontsize=20, fontweight='bold', pad=12
     )
     for spine in ax.spines.values():
         spine.set_edgecolor(grid_color)
@@ -244,14 +244,14 @@ def generate_5day_chart(history_5d, current_price):
                     alpha=0.10, color=line_color, zorder=2)
     ax.scatter([times[-1]], [prices[-1]], color='#22c55e', s=60, zorder=5, linewidths=0)
     ax.annotate(f'  ${current_price:.4f}', xy=(times[-1], prices[-1]),
-                color='#22c55e', fontsize=9, fontweight='bold', va='center')
+                color='#22c55e', fontsize=18, fontweight='bold', va='center')
 
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%a', tz=TZ))
     ax.xaxis.set_major_locator(mdates.DayLocator(tz=TZ))
-    plt.xticks(rotation=0, ha='center', color=text_color, fontsize=10)
-    plt.yticks(color=text_color, fontsize=10)
-    ax.set_ylabel('$/gal', color=text_color, fontsize=11)
-    ax.set_title('5-Day Price Trend', color='#e2e8f0', fontsize=13, fontweight='bold', pad=10)
+    plt.xticks(rotation=0, ha='center', color=text_color, fontsize=14)
+    plt.yticks(color=text_color, fontsize=14)
+    ax.set_ylabel('$/gal', color=text_color, fontsize=16)
+    ax.set_title('5-Day Price Trend', color='#e2e8f0', fontsize=20, fontweight='bold', pad=10)
 
     for spine in ax.spines.values():
         spine.set_edgecolor(grid_color)
