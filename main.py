@@ -173,7 +173,7 @@ def generate_chart(history, current_price, open_price, daily_pct):
 # ---------------------------------------------------------------------------
 
 def build_html_email(
-    subject, current_price, open_price, daily_pct,
+    subject, current_price, open_price, high_price, low_price, daily_pct,
     now, alert_context, chart_b64
 ):
     """
@@ -217,6 +217,8 @@ def build_html_email(
         f"Change:       {arrow} {pct_sign}{daily_pct:.2f}%  "
         f"({pct_sign}${dollar_chg:.4f})\n"
         f"Open:         ${open_price:.4f} / gal\n"
+        f"High:         ${high_price:.4f} / gal\n"
+        f"Low:          ${low_price:.4f} / gal\n"
         f"As of:        {now.strftime('%I:%M %p CT — %A, %b %d %Y')}\n"
     )
     if alert_context.get('action'):
@@ -272,27 +274,35 @@ def build_html_email(
     <div style="background:#162032;display:flex;border-left:1px solid #1e293b;
                 border-right:1px solid #1e293b;">
 
-      <div style="flex:1;padding:14px 20px;border-right:1px solid #1e293b;">
+      <div style="flex:1;padding:14px 12px;border-right:1px solid #1e293b;text-align:center;">
         <p style="margin:0;font-size:10px;color:#475569;
                   text-transform:uppercase;letter-spacing:0.06em;">Open</p>
-        <p style="margin:4px 0 0;font-size:16px;font-weight:600;color:#94a3b8;">
+        <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#94a3b8;">
           ${open_price:.4f}
         </p>
       </div>
 
-      <div style="flex:1;padding:14px 20px;border-right:1px solid #1e293b;">
+      <div style="flex:1;padding:14px 12px;border-right:1px solid #1e293b;text-align:center;">
         <p style="margin:0;font-size:10px;color:#475569;
-                  text-transform:uppercase;letter-spacing:0.06em;">$ Change</p>
-        <p style="margin:4px 0 0;font-size:16px;font-weight:600;color:{pct_color};">
-          {pct_sign}${dollar_chg:.4f}
+                  text-transform:uppercase;letter-spacing:0.06em;">High</p>
+        <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#22c55e;">
+          {f"${high_price:.4f}" if high_price > 0 else "N/A"}
         </p>
       </div>
 
-      <div style="flex:1;padding:14px 20px;">
+      <div style="flex:1;padding:14px 12px;border-right:1px solid #1e293b;text-align:center;">
         <p style="margin:0;font-size:10px;color:#475569;
-                  text-transform:uppercase;letter-spacing:0.06em;">Session</p>
-        <p style="margin:4px 0 0;font-size:16px;font-weight:600;color:#94a3b8;">
-          {'Higher' if is_up else 'Lower'}
+                  text-transform:uppercase;letter-spacing:0.06em;">Low</p>
+        <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#ef4444;">
+          {f"${low_price:.4f}" if low_price > 0 else "N/A"}
+        </p>
+      </div>
+
+      <div style="flex:1;padding:14px 12px;text-align:center;">
+        <p style="margin:0;font-size:10px;color:#475569;
+                  text-transform:uppercase;letter-spacing:0.06em;">$ Change</p>
+        <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:{pct_color};">
+          {pct_sign}${dollar_chg:.4f}
         </p>
       </div>
     </div>
@@ -328,13 +338,13 @@ def build_html_email(
 
 
 def send_email(
-    subject, current_price, open_price, daily_pct,
+    subject, current_price, open_price, high_price, low_price, daily_pct,
     now, alert_context, chart_b64=None
 ):
     """Assemble and dispatch the HTML alert email."""
     try:
         cid, plain_text, html_body = build_html_email(
-            subject, current_price, open_price, daily_pct,
+            subject, current_price, open_price, high_price, low_price, daily_pct,
             now, alert_context, chart_b64
         )
 
@@ -382,7 +392,7 @@ def mark_sent_today(key):
 
 
 def send_once_today(
-    key, subject, current_price, open_price, daily_pct,
+    key, subject, current_price, open_price, high_price, low_price, daily_pct,
     now, alert_context, chart_b64=None
 ):
     """Send an alert at most once per calendar day for the given key."""
@@ -390,7 +400,7 @@ def send_once_today(
         print(f"⏭️  Skipping '{key}' — already sent today")
         return
     send_email(
-        subject, current_price, open_price, daily_pct,
+        subject, current_price, open_price, high_price, low_price, daily_pct,
         now, alert_context, chart_b64
     )
     mark_sent_today(key)
@@ -511,6 +521,8 @@ try:
     rb       = quote_res.json()['/RB']['quote']
     current_price = rb['lastPrice']
     open_price    = rb['openPrice']
+    high_price    = rb.get('highPrice', 0.0)
+    low_price     = rb.get('lowPrice', 0.0)
 except Exception as e:
     print(f"❌ Market data fetch failed: {e}")
     sys.exit(1)
@@ -522,7 +534,7 @@ else:
     daily_pct = 0.0
     print("⚠️  Open price missing — defaulting daily_pct to 0.0")
 
-print(f"📊 /RB: ${current_price:.4f} | {daily_pct:+.2f}% | {now.strftime('%-I:%M %p CT')}")
+print(f"📊 /RB: ${current_price:.4f} | {daily_pct:+.2f}% | High: ${high_price:.4f} | Low: ${low_price:.4f} | {now.strftime('%-I:%M %p CT')}")
 
 # --- Update & persist price history ---
 history = load_price_history()
@@ -534,37 +546,71 @@ chart = generate_chart(history, current_price, open_price, daily_pct)
 print("✅ Chart generated" if chart else "⚠️  Not enough history for chart yet")
 
 # ===========================================================================
-# Alert Logic  — each key fires at most once per calendar day
+# Alert Logic
 # ===========================================================================
 
-# 3% swing alert — checked every run, deduped per day
-if abs(daily_pct) >= 3.0:
-    pct_sign  = '+' if daily_pct > 0 else ''
-    direction = 'higher' if daily_pct > 0 else 'lower'
+# 1. Smart Swing Alert: compares current price against the last sent swing price
+# to detect reversals (e.g. up 3% then crash 3%), resetting daily to the open price.
+today_str = now.date().isoformat()
+raw_swing_info = get_repo_variable("LAST_SWING_INFO")
+
+last_alert_price = None
+if raw_swing_info:
+    try:
+        info = json.loads(raw_swing_info)
+        if info.get("date") == today_str:
+            last_alert_price = float(info.get("price"))
+    except Exception:
+        pass
+
+# Compare against last alert price if we sent one today; otherwise compare against open price
+ref_price = last_alert_price if last_alert_price else open_price
+if ref_price and ref_price != 0:
+    swing_from_ref = ((current_price - ref_price) / ref_price) * 100
+else:
+    swing_from_ref = 0.0
+
+if abs(swing_from_ref) >= 2.5:  # 2.5% swing threshold from reference
+    pct_sign  = '+' if swing_from_ref > 0 else ''
+    direction = 'higher' if swing_from_ref > 0 else 'lower'
     buy_note  = (
-        'Prices are rising — consider whether to lock in supply now or wait.'
-        if daily_pct > 0 else
-        'Prices are falling — may be a good opportunity to buy ahead of rack pricing.'
+        f'Prices are rising sharply (+{swing_from_ref:.1f}% from reference). Consider locking in supply.'
+        if swing_from_ref > 0 else
+        f'Prices are dropping (-{abs(swing_from_ref):.1f}% from reference). Opportunity to buy ahead of rack pricing.'
     )
-    send_once_today(
-        key='SWING3',
-        subject=f"🚨 /RB Major Move: {pct_sign}{daily_pct:.2f}% — ${current_price:.4f}/gal",
-        current_price=current_price, open_price=open_price, daily_pct=daily_pct,
+    
+    send_email(
+        subject=f"🚨 /RB Price Swing: {pct_sign}{swing_from_ref:.2f}% — ${current_price:.4f}/gal",
+        current_price=current_price,
+        open_price=open_price,
+        high_price=high_price,
+        low_price=low_price,
+        daily_pct=daily_pct,
         now=now,
         alert_context={
-            'label': 'Major Price Swing',
+            'label': 'Price Swing Alert',
             'action': buy_note,
-            'action_color': '#22c55e' if daily_pct < 0 else '#f97316',
+            'action_color': '#22c55e' if swing_from_ref < 0 else '#f97316',
         },
         chart_b64=chart
     )
+    
+    # Save the new alert price to prevent spamming until it swings another 2.5%
+    try:
+        set_repo_variable("LAST_SWING_INFO", json.dumps({"date": today_str, "price": round(current_price, 4)}))
+    except Exception as e:
+        print(f"⚠️  Could not save swing info: {e}")
 
-# 5:30 PM rack-price window (±7 min buffer for cron delays)
+# 2. 5:30 PM rack-price window (±7 min buffer for cron delays)
 if now.hour == 17 and 23 <= now.minute < 38:
     send_once_today(
         key='RACK_530',
         subject=f"⏰ Rack Window Open — /RB ${current_price:.4f}/gal ({daily_pct:+.2f}%)",
-        current_price=current_price, open_price=open_price, daily_pct=daily_pct,
+        current_price=current_price,
+        open_price=open_price,
+        high_price=high_price,
+        low_price=low_price,
+        daily_pct=daily_pct,
         now=now,
         alert_context={
             'label': '5:30 PM Rack Price Window',
@@ -574,12 +620,16 @@ if now.hour == 17 and 23 <= now.minute < 38:
         chart_b64=chart
     )
 
-# 1:30 PM settlement alert (±7 min buffer)
+# 3. 1:30 PM settlement alert (±7 min buffer)
 if now.hour == 13 and 23 <= now.minute < 38:
     send_once_today(
         key='SETTLE_130',
         subject=f"📊 /RB Settled at ${current_price:.4f}/gal ({daily_pct:+.2f}%)",
-        current_price=current_price, open_price=open_price, daily_pct=daily_pct,
+        current_price=current_price,
+        open_price=open_price,
+        high_price=high_price,
+        low_price=low_price,
+        daily_pct=daily_pct,
         now=now,
         alert_context={
             'label': '1:30 PM Daily Settlement',
@@ -589,14 +639,18 @@ if now.hour == 13 and 23 <= now.minute < 38:
         chart_b64=chart
     )
 
-# 6-hour status updates (8-min buffer)
+# 4. 6-hour status updates (8-min buffer)
 if now.hour in [0, 6, 12, 18] and 0 <= now.minute < 8:
     hour_key   = f"UPDATE_{now.strftime('%H')}"
     time_label = now.strftime('%-I %p')
     send_once_today(
         key=hour_key,
         subject=f"⏱️ {time_label} Update — /RB ${current_price:.4f}/gal ({daily_pct:+.2f}%)",
-        current_price=current_price, open_price=open_price, daily_pct=daily_pct,
+        current_price=current_price,
+        open_price=open_price,
+        high_price=high_price,
+        low_price=low_price,
+        daily_pct=daily_pct,
         now=now,
         alert_context={
             'label': f'{time_label} 6-Hour Update',

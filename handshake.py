@@ -1,6 +1,14 @@
 import base64
-import requests
 import urllib.parse
+
+try:
+    import requests
+except ImportError:
+    import subprocess
+    import sys
+    print("Installing required 'requests' library...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
+    import requests
 
 print("======================================================================")
 print("             CHARLES SCHWAB API INITIAL OAUTH HANDSHAKE               ")
