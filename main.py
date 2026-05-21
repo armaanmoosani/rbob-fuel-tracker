@@ -30,6 +30,10 @@ GH_REPO              = os.environ['GH_REPO']
 GMAIL_USER           = os.environ['GMAIL_USER']
 GMAIL_APP_PASSWORD   = os.environ['GMAIL_APP_PASSWORD']
 TO_EMAIL             = os.environ['TO_EMAIL']
+# Free SMS via carrier email-to-SMS gateway (e.g. 9995551234@vtext.com for Verizon)
+# Store the full gateway address as a GitHub Secret named PHONE_SMS_ADDRESS.
+# If the secret is missing, SMS is silently skipped.
+TO_PHONE_SMS         = os.environ.get('PHONE_SMS_ADDRESS', '')
 
 GH_HEADERS = {
     "Authorization": f"token {GH_PAT}",
@@ -666,6 +670,57 @@ def build_html_email(
 
 
 # ---------------------------------------------------------------------------
+# SMS Dispatch  (free via carrier email-to-SMS gateway)
+# ---------------------------------------------------------------------------
+
+def send_sms(current_price, open_price, high_price, low_price, daily_pct, now, alert_context):
+    """
+    Send a concise text message via the carrier's free email-to-SMS gateway.
+    Verizon: phonenumber@vtext.com  (set as GitHub Secret PHONE_SMS_ADDRESS)
+    Carrier limits: ~160 chars per message segment, plain text only, no attachments.
+    """
+    if not TO_PHONE_SMS:
+        return  # Secret not configured — skip silently
+
+    pct_sign   = '+' if daily_pct >= 0 else ''
+    arrow      = '\u25b2' if daily_pct >= 0 else '\u25bc'
+    dollar_chg = current_price - open_price
+    label      = alert_context.get('label', 'Update')
+    time_str   = now.strftime('%-I:%M %p CT')
+
+    # Build a compact single-line summary that fits in 160 chars
+    h_str = f'H:${high_price:.4f} ' if high_price > 0 else ''
+    l_str = f'L:${low_price:.4f} ' if low_price > 0 else ''
+    body = (
+        f"/RB {arrow} ${current_price:.4f} {pct_sign}{daily_pct:.2f}% "
+        f"({pct_sign}${dollar_chg:.4f}) | "
+        f"{h_str}{l_str}| {time_str}"
+    )
+    # Prefix swing alerts so they stand out in the SMS thread
+    if 'Swing' in label or 'Movement' in label or 'swing' in label:
+        body = f"\U0001f6a8 SWING {body}"
+    elif 'Rack' in label:
+        body = f"\u23f0 RACK {body}"
+    elif 'Settlement' in label:
+        body = f"\U0001f4ca SETTLE {body}"
+
+    try:
+        sms_msg = MIMEText(body[:320])   # carrier may concatenate two segments if needed
+        sms_msg['Subject'] = ''          # subject shows as part of body on most carriers
+        sms_msg['From']    = GMAIL_USER
+        sms_msg['To']      = TO_PHONE_SMS
+
+        srv = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)
+        srv.starttls()
+        srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+        srv.sendmail(GMAIL_USER, TO_PHONE_SMS, sms_msg.as_string())
+        srv.quit()
+        print(f"SMS sent to gateway ({TO_PHONE_SMS})")
+    except Exception as e:
+        print(f"SMS send failed (non-fatal): {e}")
+
+
+# ---------------------------------------------------------------------------
 # Email Dispatch
 # ---------------------------------------------------------------------------
 
@@ -674,7 +729,7 @@ def send_email(
     now, alert_context, chart_intraday_b64=None, chart_5d_b64=None,
     yesterday_close=None, five_day_high=None, five_day_low=None, thirty_day_avg=None
 ):
-    """Assemble and send the HTML email with both charts."""
+    """Assemble and send the HTML email with both charts, then also fire an SMS."""
     try:
         cid_intra, cid_5d, plain_text, html_body = build_html_email(
             subject, current_price, open_price, high_price, low_price, daily_pct,
@@ -713,6 +768,9 @@ def send_email(
 
     except Exception as e:
         print(f"Email send failed: {e}")
+
+    # Also fire SMS (always attempted, failures are non-fatal)
+    send_sms(current_price, open_price, high_price, low_price, daily_pct, now, alert_context)
 
 
 # ---------------------------------------------------------------------------
