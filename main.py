@@ -15,6 +15,7 @@ from email.mime.image import MIMEImage
 from datetime import datetime, date, timezone
 import requests
 import pytz
+import yfinance as yf
 from base64 import b64encode
 from nacl import encoding, public
 
@@ -326,7 +327,8 @@ def build_html_email(
       <p style="margin:0;font-size:10px;color:#334155;">
         Automated by <a href="https://github.com/{GH_REPO}" style="color:#475569;
         text-decoration:none;">armaanmoosani/rbob-fuel-tracker</a>
-        &nbsp;·&nbsp; GitHub Actions · Data via Charles Schwab Trader API
+        &nbsp;·&nbsp; GitHub Actions
+        &nbsp;·&nbsp; {"⚡ Live data via Charles Schwab Trader API" if data_source == "schwab" else "⏱️ Fallback data via Yahoo Finance (RB=F) — approx. 15 min delayed"}
       </p>
     </div>
 
@@ -511,21 +513,55 @@ except Exception as e:
     print(f"❌ FATAL: GitHub secret update failed: {e}")
     sys.exit(1)
 
-# --- Fetch Live /RB Market Data ---
+# --- Fetch Live /RB Market Data (Schwab primary, yfinance fallback) ---
+data_source = None
+current_price = open_price = high_price = low_price = None
+
+# --- Primary: Charles Schwab real-time CME data ---
 try:
     quote_res = requests.get(
         "https://api.schwabapi.com/marketdata/v1/quotes?symbols=/RB",
-        headers={"Authorization": f"Bearer {access_token}"}
+        headers={"Authorization": f"Bearer {access_token}"},
+        timeout=15
     )
     quote_res.raise_for_status()
-    rb       = quote_res.json()['/RB']['quote']
-    current_price = rb['lastPrice']
-    open_price    = rb['openPrice']
-    high_price    = rb.get('highPrice', 0.0)
-    low_price     = rb.get('lowPrice', 0.0)
-except Exception as e:
-    print(f"❌ Market data fetch failed: {e}")
-    sys.exit(1)
+    rb            = quote_res.json()['/RB']['quote']
+    current_price = float(rb['lastPrice'])
+    open_price    = float(rb['openPrice'])
+    high_price    = float(rb.get('highPrice', 0.0))
+    low_price     = float(rb.get('lowPrice', 0.0))
+    data_source   = 'schwab'
+    print("✅ Market data: Schwab real-time")
+except Exception as schwab_err:
+    print(f"⚠️  Schwab market data failed ({schwab_err}) — falling back to yfinance")
+
+# --- Fallback: Yahoo Finance (RB=F, ~15 min delayed) ---
+if data_source is None:
+    try:
+        rb_yf  = yf.Ticker("RB=F")
+        # fast_info gives the latest price quickly
+        fi     = rb_yf.fast_info
+        current_price = float(fi['last_price'])
+        # history(period='1d') gives today's OHLC bar
+        hist   = rb_yf.history(period='1d')
+        if not hist.empty:
+            open_price = float(hist['Open'].iloc[-1])
+            high_price = float(hist['High'].iloc[-1])
+            low_price  = float(hist['Low'].iloc[-1])
+        else:
+            # history came back empty (weekend / pre-market); use last_price as open
+            open_price = current_price
+            high_price = 0.0
+            low_price  = 0.0
+        data_source = 'yfinance'
+        print("✅ Market data: yfinance fallback (RB=F, ~15 min delayed)")
+    except Exception as yf_err:
+        print(f"❌ yfinance fallback also failed: {yf_err}")
+        sys.exit(1)
+
+# Guard: ensure open_price is usable
+if not open_price or open_price == 0:
+    open_price = current_price
 
 # Daily % change (division-by-zero safe)
 if open_price and open_price != 0:
