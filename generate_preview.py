@@ -93,10 +93,10 @@ def generate_intraday_chart(history, current_price, open_price, high_price, low_
 
     is_up      = daily_pct >= 0
     line_color = '#22c55e' if is_up else '#ef4444'
-    bg_dark    = '#0f172a'
-    bg_panel   = '#1e293b'
-    grid_color = '#334155'
-    text_color = '#94a3b8'
+    bg_dark    = '#ffffff'
+    bg_panel   = '#f8fafc'
+    grid_color = '#e2e8f0'
+    text_color = '#64748b'
 
     fig, ax = plt.subplots(figsize=(10, 4.0))
     fig.patch.set_facecolor(bg_dark)
@@ -163,10 +163,11 @@ def generate_5day_chart(history_5d, current_price):
     times  = [datetime.fromisoformat(h['t']).astimezone(TZ) for h in history_5d]
     prices = [h['p'] for h in history_5d]
 
-    bg_dark    = '#0f172a'
-    bg_panel   = '#1e293b'
-    grid_color = '#334155'
-    text_color = '#94a3b8'
+    bg_dark    = '#ffffff'
+    bg_panel   = '#f8fafc'
+    grid_color = '#e2e8f0'
+    text_color = '#0f172a'
+    text_muted = '#64748b'
     line_color = '#60a5fa'   # neutral blue — not directional
 
     fig, ax = plt.subplots(figsize=(10, 2.8))
@@ -242,7 +243,7 @@ def build_html_email(
         intraday_section = (
             f'<img src="data:image/png;base64,{chart_intraday_b64}" '
             f'alt="Intraday Price Chart" '
-            f'style="width:100%;border-radius:6px;display:block;"/>'
+            f'style="width:100%;max-width:100%;height:auto;border-radius:6px;display:block;"/>'
         )
     else:
         intraday_section = (
@@ -255,20 +256,21 @@ def build_html_email(
         fiveday_section = (
             f'<img src="data:image/png;base64,{chart_5d_b64}" '
             f'alt="5-Day Trend Chart" '
-            f'style="width:100%;border-radius:6px;display:block;"/>'
+            f'style="width:100%;max-width:100%;height:auto;border-radius:6px;display:block;"/>'
         )
 
     action_line = ''
     if alert_context.get('action'):
         ac = alert_context['action_color']
         action_line = f'''
-    <div style="padding:14px 22px;background:#0b1829;
-                border-left:4px solid {ac};border-right:1px solid #1a2640;">
+    <div style="padding:14px 22px;background:#ffffff;
+                border-left:4px solid {ac};border-right:1px solid #e2e8f0;
+                border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;">
       <p style="margin:0 0 3px;font-size:9px;color:{ac};
                 text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">
         {alert_context['label']}
       </p>
-      <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6;">
+      <p style="margin:0;font-size:12px;color:#475569;line-height:1.6;">
         {alert_context['action']}
       </p>
     </div>'''
@@ -285,24 +287,29 @@ def build_html_email(
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
 </head>
-<body style="margin:0;padding:20px 10px;background:#070c18;
+<body style="margin:0;padding:0;background-color:#f1f5f9;
              font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Helvetica,Arial,sans-serif;">
-
-  <div style="max-width:620px;margin:0 auto;">
+  <table width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#f1f5f9;">
+    <tr>
+      <td align="center" style="padding:20px 10px;">
+        <!--[if mso]>
+        <table role="presentation" align="center" style="width:620px;"><tr><td>
+        <![endif]-->
+        <div style="max-width:620px;margin:0 auto;width:100%;text-align:left;">
 
     <!-- HEADER -->
-    <div style="background:#0d1526;border-radius:10px 10px 0 0;
-                padding:13px 20px;border:1px solid #1a2640;border-bottom:none;">
+    <div style="background:#ffffff;border-radius:10px 10px 0 0;
+                padding:13px 20px;border:1px solid #e2e8f0;border-bottom:none;">
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
           <td>
-            <p style="margin:0;font-size:10px;color:#3d5070;
+            <p style="margin:0;font-size:10px;color:#64748b;
                       letter-spacing:0.1em;text-transform:uppercase;font-weight:600;">
-              /RB &nbsp;&middot;&nbsp; RBOB Gasoline Futures &nbsp;&middot;&nbsp; NYMEX CME
+              Wholesale Gas (/RB) &nbsp;&middot;&nbsp; RBOB Gasoline Futures &nbsp;&middot;&nbsp; NYMEX CME
             </p>
           </td>
           <td style="text-align:right;">
-            <p style="margin:0;font-size:10px;color:#2d3d55;">
+            <p style="margin:0;font-size:10px;color:#94a3b8;">
               {now.strftime('%-I:%M %p CT &nbsp;&middot;&nbsp; %b %-d, %Y')}
             </p>
           </td>
@@ -311,14 +318,14 @@ def build_html_email(
     </div>
 
     <!-- CURRENT PRICE -->
-    <div style="background:#111e35;padding:20px 20px 16px;
-                border-left:1px solid #1a2640;border-right:1px solid #1a2640;">
-      <p style="margin:0 0 2px;font-size:9px;color:#3d5070;
+    <div style="background:#ffffff;padding:20px 20px 16px;
+                border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0;">
+      <p style="margin:0 0 2px;font-size:9px;color:#64748b;
                 letter-spacing:0.1em;text-transform:uppercase;font-weight:600;">Current Price</p>
-      <p style="margin:0;font-size:50px;font-weight:700;color:#f0f4f8;
+      <p style="margin:0;font-size:44px;font-weight:700;color:#0f172a;
                 letter-spacing:-1.5px;line-height:1.05;">
         ${current_price:.4f}
-        <span style="font-size:14px;color:#3d5070;font-weight:400;">&nbsp;/gal</span>
+        <span style="font-size:14px;color:#64748b;font-weight:400;">&nbsp;/gal</span>
       </p>
       <div style="display:inline-block;margin-top:9px;padding:4px 13px;
                   background:{pct_bg};border-radius:20px;border:1px solid {pct_color}33;">
@@ -328,31 +335,31 @@ def build_html_email(
         <span style="font-size:12px;color:{pct_color};opacity:0.8;">
           &nbsp;({pct_sign}${dollar_chg:.4f})
         </span>
-        <span style="font-size:10px;color:#3d5070;">&nbsp;vs open</span>
+        <span style="font-size:10px;color:#64748b;">&nbsp;vs open</span>
       </div>
     </div>
 
     <!-- TODAY'S SESSION STATS -->
-    <div style="background:#0d1929;border-left:1px solid #1a2640;
-                border-right:1px solid #1a2640;border-top:1px solid #1a2640;">
-      <p style="margin:0;padding:7px 20px 0;font-size:8px;color:#2d3d55;
+    <div style="background:#f8fafc;border-left:1px solid #e2e8f0;
+                border-right:1px solid #e2e8f0;border-top:1px solid #e2e8f0;">
+      <p style="margin:0;padding:7px 20px 0;font-size:8px;color:#94a3b8;
                 text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">Today's Session</p>
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td width="25%" style="padding:6px 10px 10px;border-right:1px solid #1a2640;text-align:center;">
-            <p style="margin:0;font-size:8px;color:#3d5070;text-transform:uppercase;letter-spacing:0.07em;">Open</p>
-            <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#8899aa;">${open_price:.4f}</p>
+          <td width="25%" style="padding:6px 10px 10px;border-right:1px solid #e2e8f0;text-align:center;">
+            <p style="margin:0;font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;">Open</p>
+            <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#334155;">${open_price:.4f}</p>
           </td>
-          <td width="25%" style="padding:6px 10px 10px;border-right:1px solid #1a2640;text-align:center;">
-            <p style="margin:0;font-size:8px;color:#3d5070;text-transform:uppercase;letter-spacing:0.07em;">Day High</p>
+          <td width="25%" style="padding:6px 10px 10px;border-right:1px solid #e2e8f0;text-align:center;">
+            <p style="margin:0;font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;">Day High</p>
             <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#22c55e;">{f"${high_price:.4f}" if high_price > 0 else "N/A"}</p>
           </td>
-          <td width="25%" style="padding:6px 10px 10px;border-right:1px solid #1a2640;text-align:center;">
-            <p style="margin:0;font-size:8px;color:#3d5070;text-transform:uppercase;letter-spacing:0.07em;">Day Low</p>
+          <td width="25%" style="padding:6px 10px 10px;border-right:1px solid #e2e8f0;text-align:center;">
+            <p style="margin:0;font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;">Day Low</p>
             <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#ef4444;">{f"${low_price:.4f}" if low_price > 0 else "N/A"}</p>
           </td>
           <td width="25%" style="padding:6px 10px 10px;text-align:center;">
-            <p style="margin:0;font-size:8px;color:#3d5070;text-transform:uppercase;letter-spacing:0.07em;">$ Change</p>
+            <p style="margin:0;font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;">$ Change</p>
             <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:{pct_color};">{pct_sign}${dollar_chg:.4f}</p>
           </td>
         </tr>
@@ -360,63 +367,63 @@ def build_html_email(
     </div>
 
     <!-- HISTORICAL CONTEXT STATS -->
-    <div style="background:#0a1422;border-left:1px solid #1a2640;
-                border-right:1px solid #1a2640;border-top:1px solid #141f30;">
-      <p style="margin:0;padding:7px 20px 0;font-size:8px;color:#2d3d55;
+    <div style="background:#ffffff;border-left:1px solid #e2e8f0;
+                border-right:1px solid #e2e8f0;border-top:1px solid #e2e8f0;">
+      <p style="margin:0;padding:7px 20px 0;font-size:8px;color:#94a3b8;
                 text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">Historical Context</p>
       <table width="100%" cellpadding="0" cellspacing="0">
         <tr>
-          <td width="25%" style="padding:6px 10px 10px;border-right:1px solid #1a2640;text-align:center;">
-            <p style="margin:0;font-size:8px;color:#3d5070;text-transform:uppercase;letter-spacing:0.07em;">Yest. Close</p>
-            <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#8899aa;">{yest_cell}{yest_chg}</p>
+          <td width="25%" style="padding:6px 10px 10px;border-right:1px solid #e2e8f0;text-align:center;">
+            <p style="margin:0;font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;">Yest. Close</p>
+            <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#334155;">{yest_cell}{yest_chg}</p>
           </td>
-          <td width="25%" style="padding:6px 10px 10px;border-right:1px solid #1a2640;text-align:center;">
-            <p style="margin:0;font-size:8px;color:#3d5070;text-transform:uppercase;letter-spacing:0.07em;">5-Day High</p>
-            <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#8899aa;">{fmt(five_day_high)}</p>
+          <td width="25%" style="padding:6px 10px 10px;border-right:1px solid #e2e8f0;text-align:center;">
+            <p style="margin:0;font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;">5-Day High</p>
+            <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#334155;">{fmt(five_day_high)}</p>
           </td>
-          <td width="25%" style="padding:6px 10px 10px;border-right:1px solid #1a2640;text-align:center;">
-            <p style="margin:0;font-size:8px;color:#3d5070;text-transform:uppercase;letter-spacing:0.07em;">5-Day Low</p>
-            <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#8899aa;">{fmt(five_day_low)}</p>
+          <td width="25%" style="padding:6px 10px 10px;border-right:1px solid #e2e8f0;text-align:center;">
+            <p style="margin:0;font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;">5-Day Low</p>
+            <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#334155;">{fmt(five_day_low)}</p>
           </td>
           <td width="25%" style="padding:6px 10px 10px;text-align:center;">
-            <p style="margin:0;font-size:8px;color:#3d5070;text-transform:uppercase;letter-spacing:0.07em;">30-Day Avg</p>
-            <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#8899aa;">{fmt(thirty_day_avg)}{ctx_30d_vs}</p>
+            <p style="margin:0;font-size:8px;color:#64748b;text-transform:uppercase;letter-spacing:0.07em;">30-Day Avg</p>
+            <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:#334155;">{fmt(thirty_day_avg)}{ctx_30d_vs}</p>
           </td>
         </tr>
       </table>
     </div>
 
     <!-- TODAY'S RANGE BAR -->
-    <div style="background:#0d1929;padding:12px 20px 16px;
-                border-left:1px solid #1a2640;border-right:1px solid #1a2640;
-                border-top:1px solid #141f30;">
+    <div style="background:#f8fafc;padding:12px 20px 16px;
+                border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0;
+                border-top:1px solid #e2e8f0;">
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-bottom:8px;">
         <tr>
           <td>
-            <p style="margin:0;font-size:8px;color:#2d3d55;
+            <p style="margin:0;font-size:8px;color:#94a3b8;
                       text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">
               Position in Today's Range
             </p>
           </td>
           <td style="text-align:right;">
-            <p style="margin:0;font-size:10px;color:#556678;font-weight:600;">
+            <p style="margin:0;font-size:10px;color:#475569;font-weight:600;">
               {range_pct:.0f}% of day range &nbsp;
               (L:&nbsp;${low_price:.4f} &nbsp;&ndash;&nbsp; H:&nbsp;${high_price:.4f})
             </p>
           </td>
         </tr>
       </table>
-      <div style="position:relative;height:4px;background:#1a2640;border-radius:2px;">
+      <div style="position:relative;height:4px;background:#e2e8f0;border-radius:2px;">
         <div style="height:4px;width:{range_bar_pos:.0f}%;
-                    background:linear-gradient(to right,#2d4a6a,#4a6a8a);border-radius:2px;"></div>
+                    background:linear-gradient(to right,#cbd5e1,#94a3b8);border-radius:2px;"></div>
         <div style="position:absolute;top:-5px;left:calc({range_bar_pos:.0f}% - 7px);
                     width:14px;height:14px;border-radius:50%;
-                    background:{pct_color};border:2px solid #0d1929;"></div>
+                    background:{pct_color};border:2px solid #ffffff;"></div>
       </div>
       <table width="100%" cellpadding="0" cellspacing="0" style="margin-top:10px;">
         <tr>
-          <td style="font-size:9px;color:#2d3d55;">Low &nbsp;${low_price:.4f}</td>
-          <td style="text-align:right;font-size:9px;color:#2d3d55;">High &nbsp;${high_price:.4f}</td>
+          <td style="font-size:9px;color:#94a3b8;">Low &nbsp;${low_price:.4f}</td>
+          <td style="text-align:right;font-size:9px;color:#94a3b8;">High &nbsp;${high_price:.4f}</td>
         </tr>
       </table>
     </div>
@@ -425,10 +432,10 @@ def build_html_email(
     {action_line}
 
     <!-- INTRADAY CHART -->
-    <div style="background:#111e35;padding:16px 20px 18px;
-                border-left:1px solid #1a2640;border-right:1px solid #1a2640;
-                border-top:1px solid #141f30;">
-      <p style="margin:0 0 10px;font-size:8px;color:#2d3d55;
+    <div style="background:#ffffff;padding:16px 20px 18px;
+                border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0;
+                border-top:1px solid #e2e8f0;">
+      <p style="margin:0 0 10px;font-size:8px;color:#94a3b8;
                 text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">
         Intraday Price Chart &mdash; Today's Session
       </p>
@@ -436,20 +443,26 @@ def build_html_email(
     </div>
 
     <!-- 5-DAY CHART -->
-    {'<div style="background:#0d1526;padding:14px 20px 16px;border-left:1px solid #1a2640;border-right:1px solid #1a2640;border-top:1px solid #101828;"><p style="margin:0 0 10px;font-size:8px;color:#2d3d55;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">5-Day Trend &mdash; Mon through Today</p>' + fiveday_section + '</div>' if fiveday_section else ''}
+    {'<div style="background:#ffffff;padding:14px 20px 16px;border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0;border-top:1px solid #e2e8f0;"><p style="margin:0 0 10px;font-size:8px;color:#94a3b8;text-transform:uppercase;letter-spacing:0.1em;font-weight:600;">5-Day Trend &mdash; Mon through Today</p>' + fiveday_section + '</div>' if fiveday_section else ''}
 
     <!-- FOOTER -->
-    <div style="background:#070c18;border-radius:0 0 10px 10px;padding:10px 20px;
-                border:1px solid #1a2640;border-top:none;">
-      <p style="margin:0;font-size:9px;color:#1e2d40;line-height:1.6;">
+    <div style="background:#f1f5f9;border-radius:0 0 10px 10px;padding:10px 20px;
+                border:1px solid #e2e8f0;border-top:none;">
+      <p style="margin:0;font-size:9px;color:#64748b;line-height:1.6;">
         Automated by
         <a href="https://github.com/armaanmoosani/rbob-fuel-tracker"
-           style="color:#2d4060;text-decoration:none;">armaanmoosani/rbob-fuel-tracker</a>
+           style="color:#2563eb;text-decoration:none;">armaanmoosani/rbob-fuel-tracker</a>
         &nbsp;&middot;&nbsp; GitHub Actions &nbsp;&middot;&nbsp; {source_label}
       </p>
     </div>
 
-  </div>
+        </div>
+        <!--[if mso]>
+        </td></tr></table>
+        <![endif]-->
+      </td>
+    </tr>
+  </table>
 </body>
 </html>"""
     return html
