@@ -793,6 +793,11 @@ except Exception as e:
     sys.exit(1)
 
 # --- Fetch Live /RB Price (Schwab primary, yfinance fallback) ---
+yf_session = requests.Session()
+yf_session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+})
+
 data_source   = None
 current_price = open_price = high_price = low_price = None
 
@@ -815,7 +820,7 @@ except Exception as schwab_err:
 
 if data_source is None:
     try:
-        rb_yf         = yf.Ticker("RB=F")
+        rb_yf         = yf.Ticker("RB=F", session=yf_session)
         fi            = rb_yf.fast_info
         current_price = float(fi['last_price'])
         hist          = rb_yf.history(period='1d', interval='5m')
@@ -845,7 +850,7 @@ yesterday_close = five_day_high = five_day_low = thirty_day_avg = None
 history_5d = []
 
 try:
-    rb_ctx = yf.Ticker("RB=F")
+    rb_ctx = yf.Ticker("RB=F", session=yf_session)
 
     # 5-day hourly — for 5-day chart, yesterday close, and 5-day H/L
     h5d = rb_ctx.history(period='5d', interval='1h')
