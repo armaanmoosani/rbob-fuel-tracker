@@ -939,7 +939,7 @@ if now.hour == 17 and 23 <= now.minute < 38:
         alert_context={
             'label': 'Rack Pricing Window — 5:30 PM CT',
             'action': (
-                f'Tonight\'s rack prices go effective at 7:00 PM CT. '
+                f'Graves Oil releases tonight\'s prices between 5:00 PM and 9:30 PM (effective at 7:00 PM CT). '
                 f'Current /RB: ${current_price:.4f}/gal ({daily_pct:+.2f}% from open of ${open_price:.4f}). '
                 f'Day range: ${low_price:.4f} \u2013 ${high_price:.4f} '
                 f'(${abs(high_price - low_price):.4f} spread).'
