@@ -805,13 +805,28 @@ try:
         timeout=15
     )
     quote_res.raise_for_status()
-    rb            = quote_res.json()['/RB']['quote']
+    
+    res_json = quote_res.json()
+    key = None
+    if '/RB' in res_json:
+        key = '/RB'
+    else:
+        rb_keys = [k for k in res_json.keys() if k.startswith('/RB')]
+        if rb_keys:
+            key = rb_keys[0]
+        elif len(res_json) == 1:
+            key = list(res_json.keys())[0]
+            
+    if not key:
+        raise KeyError("Could not find resolved futures contract in Schwab response keys: " + str(list(res_json.keys())))
+        
+    rb            = res_json[key]['quote']
     current_price = float(rb['lastPrice'])
     open_price    = float(rb['openPrice'])
     high_price    = float(rb.get('highPrice', 0.0))
     low_price     = float(rb.get('lowPrice', 0.0))
     data_source   = 'schwab'
-    print("Market data: Schwab real-time")
+    print(f"Market data: Schwab real-time (resolved /RB to {key})")
 except Exception as schwab_err:
     print(f"Schwab market data failed ({schwab_err}) — falling back to yfinance")
     if quote_res is not None:
