@@ -134,7 +134,7 @@ def generate_intraday_chart(history, current_price, open_price, high_price, low_
 
     pct_sign = '+' if is_up else ''
     ax.set_title(
-        f'/RB Intraday   {pct_sign}{daily_pct:.2f}% vs open   '
+        f'Wholesale Gas (/RB) Intraday   {pct_sign}{daily_pct:.2f}% vs open   '
         f'as of {times[-1].strftime("%-I:%M %p CT")}',
         color='#e2e8f0', fontsize=11, fontweight='bold', pad=10
     )
@@ -491,23 +491,23 @@ if __name__ == "__main__":
     PREVIEW_MODE = 'rack'
 
     if PREVIEW_MODE == 'rack':
-        subject = f"/RB Rack Window — ${current_price:.4f}/gal ({daily_pct:+.2f}%)"
+        subject = f"Wholesale Gas (/RB) Rack Window — ${current_price:.4f}/gal ({daily_pct:+.2f}%)"
         alert_context = {
             'label': 'Rack Pricing Window — 5:30 PM CT',
             'action': (
                 f"Graves Oil releases tonight's prices between 5:00 PM and 9:30 PM (effective at 7:00 PM CT). "
-                f"Current /RB: ${current_price:.4f}/gal ({daily_pct:+.2f}% from open of ${open_price:.4f}). "
+                f"Current Wholesale Gas (/RB): ${current_price:.4f}/gal ({daily_pct:+.2f}% from open of ${open_price:.4f}). "
                 f"Day range: ${low_price:.4f} \u2013 ${high_price:.4f} "
                 f"(${abs(high_price - low_price):.4f} spread)."
             ),
             'action_color': '#f59e0b',
         }
     elif PREVIEW_MODE == 'settlement':
-        subject = f"/RB Settlement — ${current_price:.4f}/gal ({daily_pct:+.2f}%)"
+        subject = f"Wholesale Gas (/RB) Settlement — ${current_price:.4f}/gal ({daily_pct:+.2f}%)"
         alert_context = {
             'label': 'CME Daily Settlement — 1:30 PM CT',
             'action': (
-                f"Official CME /RB settlement: ${current_price:.4f}/gal "
+                f"Official CME Wholesale Gas (/RB) settlement: ${current_price:.4f}/gal "
                 f"({daily_pct:+.2f}% from open of ${open_price:.4f}). "
                 f"Day range: ${low_price:.4f} \u2013 ${high_price:.4f}. "
                 f"Tonight's rack postings are expected to reference this settlement level."
@@ -517,11 +517,11 @@ if __name__ == "__main__":
     elif PREVIEW_MODE == 'swing':
         sim_ref   = current_price / (1 - 0.031)
         swing_pct = ((current_price - sim_ref) / sim_ref) * 100
-        subject   = f"/RB Price Move: {swing_pct:+.2f}% — ${current_price:.4f}/gal"
+        subject   = f"Wholesale Gas (/RB) Price Move: {swing_pct:+.2f}% — ${current_price:.4f}/gal"
         alert_context = {
             'label': f'Price Movement Alert — {swing_pct:+.2f}% from Last Reference',
             'action': (
-                f"/RB has moved {swing_pct:+.2f}% from the last alert reference "
+                f"Wholesale Gas (/RB) has moved {swing_pct:+.2f}% from the last alert reference "
                 f"(${sim_ref:.4f}). Current: ${current_price:.4f}/gal. "
                 f"Day range: ${low_price:.4f} \u2013 ${high_price:.4f}."
             ),
@@ -529,11 +529,11 @@ if __name__ == "__main__":
         }
     else:  # routine
         time_label = now.strftime('%-I %p')
-        subject    = f"/RB {time_label} Update — ${current_price:.4f}/gal ({daily_pct:+.2f}%)"
+        subject    = f"Wholesale Gas (/RB) {time_label} Update — ${current_price:.4f}/gal ({daily_pct:+.2f}%)"
         alert_context = {
             'label': f'Scheduled Market Update — {now.strftime("%-I:%M %p CT")}',
             'action': (
-                f"/RB: ${current_price:.4f}/gal ({daily_pct:+.2f}% from open of ${open_price:.4f}). "
+                f"Current Wholesale Gas (/RB): ${current_price:.4f}/gal ({daily_pct:+.2f}% from open of ${open_price:.4f}). "
                 f"Day range: ${low_price:.4f} \u2013 ${high_price:.4f} "
                 f"(${abs(high_price - low_price):.4f} spread)."
             ),
