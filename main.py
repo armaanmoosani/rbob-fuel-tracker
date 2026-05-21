@@ -928,8 +928,8 @@ if abs(swing_from_ref) >= 2.5:
     except Exception as e:
         print(f"Warning: could not save swing info: {e}")
 
-# 2. 5:30 PM rack-price window (±7 min buffer for cron timing variance)
-if now.hour == 17 and 23 <= now.minute < 38:
+# 2. 5:30 PM rack-price window (widened window to handle GitHub Actions cron delays)
+if now.hour == 17 and now.minute >= 23:
     send_once_today(
         key='RACK_530',
         subject=f"Wholesale Gas (/RB) Rack Window — ${current_price:.4f}/gal ({daily_pct:+.2f}%)",
@@ -949,8 +949,8 @@ if now.hour == 17 and 23 <= now.minute < 38:
         **ctx
     )
 
-# 3. 1:30 PM CME settlement (±7 min buffer)
-if now.hour == 13 and 23 <= now.minute < 38:
+# 3. 1:30 PM CME settlement window (widened window to handle GitHub Actions cron delays)
+if now.hour == 13 and now.minute >= 23:
     send_once_today(
         key='SETTLE_130',
         subject=f"Wholesale Gas (/RB) Settlement — ${current_price:.4f}/gal ({daily_pct:+.2f}%)",
