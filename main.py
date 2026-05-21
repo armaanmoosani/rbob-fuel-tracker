@@ -202,7 +202,7 @@ def build_html_email(
         ac = alert_context['action_color']
         action_line = f'''
         <div style="margin:0 0 20px;padding:12px 16px;
-                    background:{pct_bg};border-left:3px solid {ac};
+                    background:#121d2f;border-left:3px solid {ac};
                     border-radius:0 6px 6px 0;">
           <p style="margin:0;font-size:13px;color:{ac};font-weight:600;">
             {alert_context['action']}
@@ -301,7 +301,7 @@ def build_html_email(
     {action_line}
 
     <!-- Chart -->
-    <div style="background:#1e293b;padding:20px 24px {'16px' if not action_line else '0 24px 20px'};
+    <div style="background:#1e293b;padding:20px 24px;
                 border-left:1px solid #1e293b;border-right:1px solid #1e293b;">
       <p style="margin:0 0 12px;font-size:10px;color:#475569;
                 text-transform:uppercase;letter-spacing:0.06em;">
@@ -354,7 +354,7 @@ def send_email(
             img.add_header('Content-Disposition', 'inline', filename='rb_chart.png')
             msg.attach(img)
 
-        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)
         server.starttls()
         server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         server.sendmail(GMAIL_USER, TO_EMAIL, msg.as_string())
@@ -370,13 +370,13 @@ def send_email(
 # ---------------------------------------------------------------------------
 
 def already_sent_today(key):
-    today = date.today().isoformat()
+    today = datetime.now(TZ).date().isoformat()
     return get_repo_variable(f"LAST_ALERT_{key}") == today
 
 
 def mark_sent_today(key):
     try:
-        set_repo_variable(f"LAST_ALERT_{key}", date.today().isoformat())
+        set_repo_variable(f"LAST_ALERT_{key}", datetime.now(TZ).date().isoformat())
     except Exception as e:
         print(f"⚠️  Could not record sent state for {key}: {e}")
 
@@ -467,7 +467,7 @@ except Exception as e:
         msg['Subject'] = "🚨 EMERGENCY: RBOB Tracker Auth Failed!"
         msg['From']    = GMAIL_USER
         msg['To']      = TO_EMAIL
-        srv = smtplib.SMTP('smtp.gmail.com', 587)
+        srv = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)
         srv.starttls()
         srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         srv.sendmail(GMAIL_USER, TO_EMAIL, msg.as_string())
@@ -491,7 +491,7 @@ except Exception as e:
         msg['Subject'] = "🚨 EMERGENCY: GitHub Secret Update Failed!"
         msg['From']    = GMAIL_USER
         msg['To']      = TO_EMAIL
-        srv = smtplib.SMTP('smtp.gmail.com', 587)
+        srv = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)
         srv.starttls()
         srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         srv.sendmail(GMAIL_USER, TO_EMAIL, msg.as_string())
