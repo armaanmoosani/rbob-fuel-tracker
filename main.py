@@ -793,11 +793,6 @@ except Exception as e:
     sys.exit(1)
 
 # --- Fetch Live /RB Price (Schwab primary, yfinance fallback) ---
-yf_session = requests.Session()
-yf_session.headers.update({
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-})
-
 data_source   = None
 current_price = open_price = high_price = low_price = None
 
@@ -820,24 +815,32 @@ except Exception as schwab_err:
     print(f"Schwab market data failed ({schwab_err}) — falling back to yfinance")
 
 if data_source is None:
-    try:
-        rb_yf         = yf.Ticker("RB=F", session=yf_session)
-        fi            = rb_yf.fast_info
-        current_price = float(fi['last_price'])
-        hist          = rb_yf.history(period='1d', interval='5m')
-        if not hist.empty:
-            open_price = float(hist['Open'].iloc[0])
-            high_price = float(hist['High'].max())
-            low_price  = float(hist['Low'].min())
-        else:
-            open_price = current_price
-            high_price = 0.0
-            low_price  = 0.0
-        data_source = 'yfinance'
-        print("Market data: yfinance fallback (RB=F, ~15 min delayed)")
-    except Exception as yf_err:
-        print(f"yfinance fallback also failed: {yf_err}")
-        sys.exit(1)
+    import time
+    for attempt in range(3):
+        try:
+            rb_yf         = yf.Ticker("RB=F")
+            fi            = rb_yf.fast_info
+            current_price = float(fi['last_price'])
+            hist          = rb_yf.history(period='1d', interval='5m')
+            if not hist.empty:
+                open_price = float(hist['Open'].iloc[0])
+                high_price = float(hist['High'].max())
+                low_price  = float(hist['Low'].min())
+            else:
+                open_price = current_price
+                high_price = 0.0
+                low_price  = 0.0
+            data_source = 'yfinance'
+            print("Market data: yfinance fallback (RB=F, ~15 min delayed)")
+            break
+        except Exception as yf_err:
+            err_str = str(yf_err)
+            if attempt < 2 and ("Too Many" in err_str or "Rate limit" in err_str or "429" in err_str):
+                print(f"yfinance rate limited (attempt {attempt+1}). Sleeping 15s...")
+                time.sleep(15)
+            else:
+                print(f"yfinance fallback completely failed: {err_str}")
+                sys.exit(1)
 
 if not open_price or open_price == 0:
     open_price = current_price
@@ -851,27 +854,39 @@ yesterday_close = five_day_high = five_day_low = thirty_day_avg = None
 history_5d = []
 
 try:
-    rb_ctx = yf.Ticker("RB=F", session=yf_session)
-
-    # 5-day hourly — for 5-day chart, yesterday close, and 5-day H/L
-    h5d = rb_ctx.history(period='5d', interval='1h')
-    if not h5d.empty:
-        history_5d  = [
-            {"t": idx.astimezone(TZ).isoformat(), "p": round(float(row['Close']), 4)}
-            for idx, row in h5d.iterrows()
-        ]
-        five_day_high = float(h5d['High'].max())
-        five_day_low  = float(h5d['Low'].min())
-        # Yesterday's close = last bar whose date is before today CT
-        today_date = now.date()
-        prev = h5d[[d.date() < today_date for d in h5d.index.to_pydatetime()]]
-        if not prev.empty:
-            yesterday_close = float(prev['Close'].iloc[-1])
-
-    # 30-day daily — for 30-day average
-    h30d = rb_ctx.history(period='1mo', interval='1d')
-    if not h30d.empty:
-        thirty_day_avg = float(h30d['Close'].mean())
+    import time
+    for attempt in range(3):
+        try:
+            rb_ctx = yf.Ticker("RB=F")
+        
+            # 5-day hourly — for 5-day chart, yesterday close, and 5-day H/L
+            h5d = rb_ctx.history(period='5d', interval='1h')
+            if not h5d.empty:
+                history_5d  = [
+                    {"t": idx.astimezone(TZ).isoformat(), "p": round(float(row['Close']), 4)}
+                    for idx, row in h5d.iterrows()
+                ]
+                five_day_high = float(h5d['High'].max())
+                five_day_low  = float(h5d['Low'].min())
+                # Yesterday's close = last bar whose date is before today CT
+                today_date = now.date()
+                prev = h5d[[d.date() < today_date for d in h5d.index.to_pydatetime()]]
+                if not prev.empty:
+                    yesterday_close = float(prev['Close'].iloc[-1])
+        
+            # 30-day daily — for 30-day average
+            h30d = rb_ctx.history(period='1mo', interval='1d')
+            if not h30d.empty:
+                thirty_day_avg = float(h30d['Close'].mean())
+            
+            break # Success, break out of retry loop
+        except Exception as e:
+            err_str = str(e)
+            if attempt < 2 and ("Too Many" in err_str or "Rate limit" in err_str or "429" in err_str):
+                print(f"yfinance 5d fetch rate limited. Sleeping 15s...")
+                time.sleep(15)
+            else:
+                raise e
 
     yest_str = f"${yesterday_close:.4f}" if yesterday_close else "N/A"
     fd_high_str = f"${five_day_high:.4f}" if five_day_high else "N/A"
