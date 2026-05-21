@@ -853,10 +853,11 @@ try:
     if not h30d.empty:
         thirty_day_avg = float(h30d['Close'].mean())
 
-    print(f"Context: yest=${yesterday_close:.4f if yesterday_close else 'N/A'} "
-          f"5d H/L=${five_day_high:.4f if five_day_high else 'N/A'}/"
-          f"${five_day_low:.4f if five_day_low else 'N/A'} "
-          f"30dAvg=${thirty_day_avg:.4f if thirty_day_avg else 'N/A'}")
+    yest_str = f"${yesterday_close:.4f}" if yesterday_close else "N/A"
+    fd_high_str = f"${five_day_high:.4f}" if five_day_high else "N/A"
+    fd_low_str = f"${five_day_low:.4f}" if five_day_low else "N/A"
+    avg_30d_str = f"${thirty_day_avg:.4f}" if thirty_day_avg else "N/A"
+    print(f"Context: yest={yest_str} 5d H/L={fd_high_str}/{fd_low_str} 30dAvg={avg_30d_str}")
 except Exception as e:
     print(f"Warning: 5-day context fetch failed: {e}")
 
