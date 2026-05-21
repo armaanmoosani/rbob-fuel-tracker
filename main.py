@@ -62,6 +62,36 @@ def get_session_date_str(dt):
 
 
 # ---------------------------------------------------------------------------
+# Dynamic Front-Month Futures Symbol Resolution
+# ---------------------------------------------------------------------------
+MONTH_CODES = {
+    1: 'G', 2: 'H', 3: 'J', 4: 'K', 5: 'M', 6: 'N',
+    7: 'Q', 8: 'U', 9: 'V', 10: 'X', 11: 'Z', 12: 'F'
+}
+
+def get_futures_symbols(dt):
+    """
+    Returns (schwab_symbol, yfinance_symbol) for the active front-month contract.
+    """
+    import datetime
+    if dt.hour >= 17:
+        trade_date = (dt + datetime.timedelta(days=1)).date()
+    else:
+        trade_date = dt.date()
+        
+    month = trade_date.month
+    year = trade_date.year
+    
+    code = MONTH_CODES[month]
+    contract_year = year + 1 if month == 12 else year
+    year_suffix = str(contract_year)[-2:]
+    
+    schwab_symbol = f"/RB{code}{year_suffix}"
+    yfinance_symbol = f"RB{code}{year_suffix}.NYM"
+    return schwab_symbol, yfinance_symbol
+
+
+# ---------------------------------------------------------------------------
 # GitHub Repo Variable Helpers
 # ---------------------------------------------------------------------------
 
@@ -796,48 +826,36 @@ except Exception as e:
 data_source   = None
 current_price = open_price = high_price = low_price = None
 
+# Dynamically resolve Schwab and yfinance symbols for the current CME front-month contract
+schwab_symbol, yf_symbol = get_futures_symbols(now)
+print(f"Targeting front-month symbols — Schwab: {schwab_symbol} | yfinance: {yf_symbol}")
+
 quote_res = None
 try:
-    # Query /RB, /RBM26, and /RBN26 to diagnose the mapping and prices
     quote_res = requests.get(
         "https://api.schwabapi.com/marketdata/v1/quotes",
-        params={"symbols": "/RB,/RBM26,/RBN26"},
+        params={"symbols": schwab_symbol},
         headers={"Authorization": f"Bearer {access_token}"},
         timeout=15
     )
     quote_res.raise_for_status()
     
     res_json = quote_res.json()
-    print("DEBUG: Schwab response keys: " + str(list(res_json.keys())))
-    for k, v in res_json.items():
-        desc = v.get('reference', {}).get('description', '')
-        last_price = v.get('quote', {}).get('lastPrice', 0.0)
-        net_change = v.get('quote', {}).get('netChange', 0.0)
-        pct_change = v.get('quote', {}).get('futurePercentChange', 0.0)
-        print(f"DEBUG: Symbol: {k} | Desc: {desc} | Price: {last_price} | Change: {net_change} ({pct_change}%)")
-        
-    key = None
-    if '/RB' in res_json:
-        key = '/RB'
+    if schwab_symbol in res_json:
+        rb = res_json[schwab_symbol]['quote']
+        key = schwab_symbol
+    elif len(res_json) == 1:
+        key = list(res_json.keys())[0]
+        rb = res_json[key]['quote']
     else:
-        rb_keys = [k for k in res_json.keys() if k.startswith('/RB')]
-        if rb_keys:
-            # Let's see if we should prefer /RBM26 if it is in the response, or how they are sorted
-            print(f"DEBUG: Found rb_keys: {rb_keys}")
-            key = rb_keys[0]
-        elif len(res_json) == 1:
-            key = list(res_json.keys())[0]
-            
-    if not key:
-        raise KeyError("Could not find resolved futures contract in Schwab response keys: " + str(list(res_json.keys())))
+        raise KeyError(f"Expected symbol {schwab_symbol} not found in Schwab response keys: {list(res_json.keys())}")
         
-    rb            = res_json[key]['quote']
     current_price = float(rb['lastPrice'])
     open_price    = float(rb['openPrice'])
     high_price    = float(rb.get('highPrice', 0.0))
     low_price     = float(rb.get('lowPrice', 0.0))
     data_source   = 'schwab'
-    print(f"Market data: Schwab real-time (resolved /RB to {key})")
+    print(f"Market data: Schwab real-time ({key})")
 except Exception as schwab_err:
     print(f"Schwab market data failed ({schwab_err}) — falling back to yfinance")
     if quote_res is not None:
@@ -851,7 +869,7 @@ if data_source is None:
     import time
     for attempt in range(3):
         try:
-            rb_yf         = yf.Ticker("RB=F")
+            rb_yf         = yf.Ticker(yf_symbol)
             fi            = rb_yf.fast_info
             current_price = float(fi['last_price'])
             hist          = rb_yf.history(period='1d', interval='5m')
@@ -864,7 +882,7 @@ if data_source is None:
                 high_price = 0.0
                 low_price  = 0.0
             data_source = 'yfinance'
-            print("Market data: yfinance fallback (RB=F, ~15 min delayed)")
+            print(f"Market data: yfinance fallback ({yf_symbol}, ~15 min delayed)")
             break
         except Exception as yf_err:
             err_str = str(yf_err)
