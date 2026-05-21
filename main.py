@@ -37,7 +37,28 @@ GH_HEADERS = {
 }
 
 TZ          = pytz.timezone('America/Chicago')
-MAX_HISTORY = 300   # ~25 hours at 5-min intervals
+
+def get_session_start(dt):
+    """
+    Returns the datetime of the open for the current CME trading session.
+    A session opens at 5:00 PM CT the calendar day before the trade date.
+    """
+    import datetime
+    if dt.hour >= 17:
+        return dt.replace(hour=17, minute=0, second=0, microsecond=0)
+    else:
+        prev_day = dt - datetime.timedelta(days=1)
+        return prev_day.replace(hour=17, minute=0, second=0, microsecond=0)
+
+def get_session_date_str(dt):
+    """
+    Returns an ISO date string for the trading session.
+    If it is after 5PM, it counts as tomorrow's trade date.
+    """
+    import datetime
+    if dt.hour >= 17:
+        return (dt + datetime.timedelta(days=1)).date().isoformat()
+    return dt.date().isoformat()
 
 
 # ---------------------------------------------------------------------------
@@ -89,9 +110,16 @@ def save_price_history(history):
 
 
 def append_price(history, ts, price):
-    """Append a data point and trim to MAX_HISTORY."""
-    history.append({"t": ts.isoformat(), "p": round(price, 4)})
-    return history[-MAX_HISTORY:]
+    """Append a data point and keep only points from the current trading session."""
+    session_start = get_session_start(ts)
+    filtered = []
+    for h in history:
+        h_dt = datetime.fromisoformat(h['t'])
+        if h_dt >= session_start:
+            filtered.append(h)
+    
+    filtered.append({"t": ts.isoformat(), "p": round(price, 4)})
+    return filtered
 
 
 # ---------------------------------------------------------------------------
@@ -618,13 +646,14 @@ def send_email(
 # ---------------------------------------------------------------------------
 
 def already_sent_today(key):
-    today = datetime.now(TZ).date().isoformat()
-    return get_repo_variable(f"LAST_ALERT_{key}") == today
+    session_str = get_session_date_str(datetime.now(TZ))
+    return get_repo_variable(f"LAST_ALERT_{key}") == session_str
 
 
 def mark_sent_today(key):
     try:
-        set_repo_variable(f"LAST_ALERT_{key}", datetime.now(TZ).date().isoformat())
+        session_str = get_session_date_str(datetime.now(TZ))
+        set_repo_variable(f"LAST_ALERT_{key}", session_str)
     except Exception as e:
         print(f"Warning: could not record sent state for {key}: {e}")
 
@@ -860,14 +889,14 @@ ctx = dict(
 # ===========================================================================
 
 # 1. Smart Swing Alert — fires any time price moves ±2.5% from last alert reference
-today_str      = now.date().isoformat()
+session_str    = get_session_date_str(now)
 raw_swing_info = get_repo_variable("LAST_SWING_INFO")
 last_alert_price = None
 
 if raw_swing_info:
     try:
         info = json.loads(raw_swing_info)
-        if info.get("date") == today_str:
+        if info.get("date") == session_str:
             last_alert_price = float(info.get("price"))
     except Exception:
         pass
@@ -895,7 +924,7 @@ if abs(swing_from_ref) >= 2.5:
     )
     try:
         set_repo_variable("LAST_SWING_INFO",
-                          json.dumps({"date": today_str, "price": round(current_price, 4)}))
+                          json.dumps({"date": session_str, "price": round(current_price, 4)}))
     except Exception as e:
         print(f"Warning: could not save swing info: {e}")
 
