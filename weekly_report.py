@@ -18,8 +18,11 @@ CSV_PATH = os.path.join(DATA_DIR, "graves_history.csv")
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
 def main():
-    if not os.path.exists(LOG_PATH) or not os.path.exists(CSV_PATH):
-        print("Required CSV files missing.")
+    if not os.path.exists(CSV_PATH):
+        print(f"Historical database missing at: {CSV_PATH}")
+        return
+    if not os.path.exists(LOG_PATH):
+        print(f"No prediction log found at: {LOG_PATH}. Waiting for first prediction run.")
         return
 
     log_df = pd.read_csv(LOG_PATH)

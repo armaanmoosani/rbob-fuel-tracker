@@ -89,16 +89,18 @@ def find_best_lag_and_window(df):
             
         df_sliced = df.tail(window) if window else df
         
-        for lag in range(0, 5):
-            nymex = df_sliced['nymex_rb'].diff().shift(lag)
-            rack = df_sliced['rack_u'].diff()
+        # Physical transmission lag is always 0 in daily fuel rack price setting.
+        # Scanning non-zero lags on small rolling windows causes overfitting/spurious correlations.
+        lag = 0
+        nymex = df_sliced['nymex_rb'].diff().shift(lag)
+        rack = df_sliced['rack_u'].diff()
+        
+        valid = ~(nymex.isna() | rack.isna())
+        if valid.sum() < 20:
+            continue
             
-            valid = ~(nymex.isna() | rack.isna())
-            if valid.sum() < 20:
-                continue
-                
-            slope, intercept, r_value, p_value, std_err = stats.linregress(nymex[valid], rack[valid])
-            correlations[(lag, window)] = r_value**2
+        slope, intercept, r_value, p_value, std_err = stats.linregress(nymex[valid], rack[valid])
+        correlations[(lag, window)] = r_value**2
 
     if not correlations:
         return 0, None
