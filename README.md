@@ -5,15 +5,17 @@ An autonomous, serverless market tracker designed for independent gas stations a
 ## Features
 
 - **Serverless Architecture**: Runs entirely on GitHub Actions via a 5-minute cron schedule. No servers to maintain.
+- **Market Calendar Awareness**: Automatically halts execution during CME Globex weekends and holidays to conserve API limits.
 - **Charles Schwab API Integration**: Pulls live `/RB` (Gasoline) and `/HO` (Diesel) futures data.
 - **Robust Fallback**: Automatically falls back to Yahoo Finance (`RB=F` and `HO=F`) if the primary broker API experiences downtime.
 - **Self-Healing OAuth**: Handles 7-day token expirations by automatically requesting new refresh tokens and securely rotating them back into GitHub Secrets using PyNaCl.
 - **Accurate CME Session Tracking**: Correctly calculates "Intraday" charts across midnight boundaries by respecting the true 5:00 PM CT to 4:00 PM CT CME trading session.
-- **Smart Alerts**: 
+- **Market Intelligence Alerts**: 
+  - **Macro Supply Indicator (Crack Spread)**: Calculates the 3:2:1 NYMEX Crack Spread using background Crude Oil (`/CL`) data to predict terminal shortages or oversupply.
+  - **Short-Term Momentum**: Tracks the 3-Day vs 10-Day Moving Average crossover to identify active upward/downward pricing trends.
+  - **Volatility Swings:** Triggers immediate alerts if the price swings > 1.5% from the last baseline.
   - **5:30 PM CT Rack Window:** Timed perfectly for evening OPIS/Terminal price releases.
   - **1:30 PM CT Settlement:** Reports the official CME daily settlement price.
-  - **Volatility Swings:** Triggers immediate alerts if the price swings > 1.5% from the last baseline.
-  - **Scheduled Summaries:** Provides routine 6-hour updates.
 
 ## Email Layout
 
