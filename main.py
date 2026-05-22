@@ -888,8 +888,8 @@ if __name__ == "__main__":
             }
         )
 
-    if now.hour == 16:
-        send_once_today('VERDICT_400', "Final Verdict: Exxon Price Predictor", all_data, now, {
+    if now.hour == 14:
+        send_once_today('VERDICT_200', "Final Verdict: Exxon Price Predictor", all_data, now, {
             'label': 'Final Verdict',
             'action': 'Comparing 1:30 PM Settlement to Yesterday to predict 6:00 PM Exxon Rack change.',
             'action_color': '#8b5cf6'
