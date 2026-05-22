@@ -95,7 +95,7 @@ def get_front_month_schwab_symbol(dt, prefix):
         while ltd.weekday() >= 5:
             ltd -= timedelta(days=1)
         days_away = (ltd - today).days
-        if days_away > 2:
+        if days_away > 10:
             break
         candidate_month += 1
         if candidate_month > 12:
@@ -318,8 +318,8 @@ def build_html_block(prefix, info, now):
     else:
         fiveday_section = ''
 
-    sma3 = info_dict.get('sma_3')
-    sma10 = info_dict.get('sma_10')
+    sma3 = info.get('sma_3')
+    sma10 = info.get('sma_10')
     momentum_html = ""
     if sma3 and sma10:
         if sma3 > sma10:
@@ -895,7 +895,7 @@ if __name__ == "__main__":
             'action_color': '#8b5cf6'
         })
 
-    if now.hour in [9, 12]:
+    if now.hour in [8, 12]:
         send_once_today(f"UPDATE_{now.strftime('%H')}", f"Market Update — {now.strftime('%-I %p')}", all_data, now, {
             'label': f'Scheduled Market Update — {now.strftime("%-I:%M %p CT")}',
             'action': 'Periodic fuel market snapshot.',
