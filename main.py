@@ -804,7 +804,7 @@ def build_html_email(subject, all_data, now, alert_context):
         {v_rb}{v_ho}
       </p>
       <p style="margin:8px 0 0;font-size:11px;color:#64748b;line-height:1.5;">
-        Action threshold: +/-{RACK_ACTION_THRESHOLD_CENTS:.1f} c/gal. Smaller moves are treated as low-confidence because OPIS rack postings also reflect local spot basis and supplier behavior.
+        Action threshold: +/-{APP_CONFIG.get('RB_HIKE_THRESHOLD_CENTS', 1.0):.1f} c/gal. Smaller moves are treated as low-confidence because OPIS rack postings also reflect local spot basis and supplier behavior.
       </p>
     </div>'''
     elif alert_context.get('action'):
@@ -975,7 +975,7 @@ def send_sms(all_data, now, alert_context):
         srv.starttls()
         srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         
-        phones = [p.strip() for p in TO_PHONE_SMS.split(',')]
+        phones = TO_PHONE_SMS
         for phone in phones:
             sms_msg['To'] = phone
             srv.sendmail(GMAIL_USER, phone, sms_msg.as_string())
@@ -993,7 +993,7 @@ def send_email(subject, all_data, now, alert_context):
         msg['Subject'] = subject
         msg['From']    = GMAIL_USER
         
-        emails = [e.strip() for e in TO_EMAIL.split(',')]
+        emails = TO_EMAIL
         
         alt = MIMEMultipart('alternative')
         alt.attach(MIMEText("Please view in an HTML-compatible email client.", 'plain'))
