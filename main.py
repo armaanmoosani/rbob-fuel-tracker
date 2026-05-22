@@ -442,7 +442,29 @@ def build_html_email(subject, all_data, now, alert_context):
             cids[f"{prefix}_5d"] = cid_5d
 
     action_line = ''
-    if alert_context.get('action'):
+    if alert_context.get('label') == 'Final Verdict':
+        rb = all_data.get('RB')
+        if rb and rb['yesterday_close']:
+            chg = rb['current_price'] - rb['yesterday_close']
+            if chg > 0:
+                ac = '#ef4444' # red
+                verdict_title = "PRICE HIKE LIKELY"
+                verdict_text = "Market settled UP. Exxon will hike rack prices at 6 PM. Dispatch a truck NOW."
+            else:
+                ac = '#22c55e' # green
+                verdict_title = "PRICE DROP LIKELY"
+                verdict_text = "Market settled DOWN. Exxon will drop rack prices at 6 PM. Stave off deliveries until tomorrow."
+            
+            action_line = f'''
+    <div style="padding:16px 22px;background:#f8fafc;border-left:6px solid {ac};border:1px solid #e2e8f0;margin-bottom:15px;border-radius:4px;">
+      <p style="margin:0 0 4px;font-size:11px;color:{ac};text-transform:uppercase;letter-spacing:0.1em;font-weight:800;">
+        {alert_context['label']}: {verdict_title}
+      </p>
+      <p style="margin:0;font-size:14px;color:#0f172a;font-weight:700;line-height:1.4;">
+        {verdict_text}
+      </p>
+    </div>'''
+    elif alert_context.get('action'):
         ac = alert_context.get('action_color', '#64748b')
         action_line = f'''
     <div style="padding:14px 22px;background:#ffffff;border-left:4px solid {ac};border-right:1px solid #e2e8f0;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;margin-bottom:15px;">
@@ -537,6 +559,22 @@ def send_sms(all_data, now, alert_context):
 
     lines = [f"{alert_type}"]
     lines.append("")
+    
+    if alert_context.get('label') == 'Final Verdict':
+        rb = all_data.get('RB')
+        if rb and rb['yesterday_close']:
+            chg = rb['current_price'] - rb['yesterday_close']
+            if chg > 0:
+                verdict = "PRICE HIKE LIKELY"
+                strat = "Market settled UP. Exxon will hike rack prices at 6 PM. Dispatch a truck NOW."
+            else:
+                verdict = "PRICE DROP LIKELY"
+                strat = "Market settled DOWN. Exxon will drop rack prices at 6 PM. Stave off deliveries until tomorrow."
+            lines.append("=== FINAL VERDICT ===")
+            lines.append(f"{verdict}")
+            lines.append(f"{strat}")
+            lines.append("=====================")
+            lines.append("")
     
     for prefix in ['RB', 'HO']:
         if prefix in all_data:
@@ -847,21 +885,14 @@ if __name__ == "__main__":
             }
         )
 
-    if now.hour == 17 and now.minute >= 23:
-        send_once_today('RACK_530', "Rack Pricing Window", all_data, now, {
-            'label': 'Rack Pricing Window — 5:30 PM CT',
-            'action': 'Tonight\'s rack prices go effective at 7:00 PM CT.',
-            'action_color': '#f59e0b'
+    if now.hour == 16:
+        send_once_today('VERDICT_400', "Final Verdict: Exxon Price Predictor", all_data, now, {
+            'label': 'Final Verdict',
+            'action': 'Comparing 1:30 PM Settlement to Yesterday to predict 6:00 PM Exxon Rack change.',
+            'action_color': '#8b5cf6'
         })
 
-    if now.hour == 13 and now.minute >= 23:
-        send_once_today('SETTLE_130', "CME Settlement", all_data, now, {
-            'label': 'CME Daily Settlement — 1:30 PM CT',
-            'action': 'Official CME settlement window closed. Rack postings reference this level.',
-            'action_color': '#60a5fa'
-        })
-
-    if now.hour in [0, 6, 12, 18]:
+    if now.hour in [8, 12]:
         send_once_today(f"UPDATE_{now.strftime('%H')}", f"Market Update — {now.strftime('%-I %p')}", all_data, now, {
             'label': f'Scheduled Market Update — {now.strftime("%-I:%M %p CT")}',
             'action': 'Periodic fuel market snapshot.',
