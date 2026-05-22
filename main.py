@@ -444,24 +444,26 @@ def build_html_email(subject, all_data, now, alert_context):
     action_line = ''
     if alert_context.get('label') == 'Final Verdict':
         rb = all_data.get('RB')
-        if rb and rb['yesterday_close']:
-            chg = rb['current_price'] - rb['yesterday_close']
+        ho = all_data.get('HO')
+        
+        def get_verdict(data, name):
+            if not data or not data.get('yesterday_close'): return ""
+            chg = data['current_price'] - data['yesterday_close']
             if chg > 0:
-                ac = '#ef4444' # red
-                verdict_title = "PRICE HIKE LIKELY"
-                verdict_text = "Market settled UP. Exxon will hike rack prices at 6 PM. Dispatch a truck NOW."
+                return f'<span style="color:#ef4444;font-weight:800;">{name} HIKE LIKELY:</span> Market UP. Dispatch truck NOW.<br>'
             else:
-                ac = '#22c55e' # green
-                verdict_title = "PRICE DROP LIKELY"
-                verdict_text = "Market settled DOWN. Exxon will drop rack prices at 6 PM. Stave off deliveries until tomorrow."
-            
-            action_line = f'''
-    <div style="padding:16px 22px;background:#f8fafc;border-left:6px solid {ac};border:1px solid #e2e8f0;margin-bottom:15px;border-radius:4px;">
-      <p style="margin:0 0 4px;font-size:11px;color:{ac};text-transform:uppercase;letter-spacing:0.1em;font-weight:800;">
-        {alert_context['label']}: {verdict_title}
+                return f'<span style="color:#22c55e;font-weight:800;">{name} DROP LIKELY:</span> Market DOWN. Stave off deliveries.<br>'
+                
+        v_rb = get_verdict(rb, 'UNLEADED')
+        v_ho = get_verdict(ho, 'DIESEL')
+        
+        action_line = f'''
+    <div style="padding:16px 22px;background:#f8fafc;border-left:6px solid #8b5cf6;border:1px solid #e2e8f0;margin-bottom:15px;border-radius:4px;">
+      <p style="margin:0 0 6px;font-size:11px;color:#8b5cf6;text-transform:uppercase;letter-spacing:0.1em;font-weight:800;">
+        {alert_context['label']}
       </p>
-      <p style="margin:0;font-size:14px;color:#0f172a;font-weight:700;line-height:1.4;">
-        {verdict_text}
+      <p style="margin:0;font-size:13px;color:#0f172a;line-height:1.6;">
+        {v_rb}{v_ho}
       </p>
     </div>'''
     elif alert_context.get('action'):
@@ -561,20 +563,22 @@ def send_sms(all_data, now, alert_context):
     lines.append("")
     
     if alert_context.get('label') == 'Final Verdict':
+        lines.append("=== FINAL VERDICT ===")
         rb = all_data.get('RB')
+        ho = all_data.get('HO')
+        
         if rb and rb['yesterday_close']:
             chg = rb['current_price'] - rb['yesterday_close']
-            if chg > 0:
-                verdict = "PRICE HIKE LIKELY"
-                strat = "Market settled UP. Exxon will hike rack prices at 6 PM. Dispatch a truck NOW."
-            else:
-                verdict = "PRICE DROP LIKELY"
-                strat = "Market settled DOWN. Exxon will drop rack prices at 6 PM. Stave off deliveries until tomorrow."
-            lines.append("=== FINAL VERDICT ===")
-            lines.append(f"{verdict}")
-            lines.append(f"{strat}")
-            lines.append("=====================")
-            lines.append("")
+            if chg > 0: lines.append("GAS: HIKE (Buy Now)")
+            else: lines.append("GAS: DROP (Wait)")
+            
+        if ho and ho['yesterday_close']:
+            chg = ho['current_price'] - ho['yesterday_close']
+            if chg > 0: lines.append("DIESEL: HIKE (Buy Now)")
+            else: lines.append("DIESEL: DROP (Wait)")
+            
+        lines.append("=====================")
+        lines.append("")
     
     for prefix in ['RB', 'HO']:
         if prefix in all_data:
