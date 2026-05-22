@@ -21,7 +21,8 @@ def load_config():
         "RB_DROP_THRESHOLD_CENTS": -1.0,
         "HO_HIKE_THRESHOLD_CENTS": 1.0,
         "HO_DROP_THRESHOLD_CENTS": -1.0,
-        "LAG_DAYS": 0
+        "LAG_DAYS": 0,
+        "ROLLING_WINDOW_DAYS": 120
     }
 
 def save_config(cfg):
@@ -78,24 +79,32 @@ def run_tuning(df, nymex_col, rack_col, prefix, cfg):
 
     return cfg, f"R2={r_value**2:.2f}, p={p_value:.3f}, pass_thru={slope:.2f}"
 
-def find_best_lag(df):
+def find_best_lag_and_window(df):
+    windows = [90, 120, 180, 240, 365, None] # None means all historical data
     correlations = {}
-    for lag in range(0, 5):
-        # Shift first, then dropna to ensure we compare shifted days properly
-        nymex = df['nymex_rb'].shift(lag)
-        rack = df['rack_u']
-        
-        valid = ~(nymex.isna() | rack.isna())
-        if valid.sum() < 20:
+    
+    for window in windows:
+        if window is not None and len(df) < window:
             continue
             
-        slope, intercept, r_value, p_value, std_err = stats.linregress(nymex[valid], rack[valid])
-        correlations[lag] = r_value**2
+        df_sliced = df.tail(window) if window else df
+        
+        for lag in range(0, 5):
+            nymex = df_sliced['nymex_rb'].shift(lag)
+            rack = df_sliced['rack_u']
+            
+            valid = ~(nymex.isna() | rack.isna())
+            if valid.sum() < 20:
+                continue
+                
+            slope, intercept, r_value, p_value, std_err = stats.linregress(nymex[valid], rack[valid])
+            correlations[(lag, window)] = r_value**2
 
     if not correlations:
-        return 0
-    best_lag = max(correlations, key=correlations.get)
-    return best_lag
+        return 0, None
+        
+    best_lag, best_window = max(correlations, key=correlations.get)
+    return best_lag, best_window
 
 def main():
     print("Starting backtest engine...")
@@ -112,10 +121,15 @@ def main():
         print(f"Insufficient data. Have {len(df)} rows, need {min_rows}. Exiting.")
         sys.exit(0)
 
-    # Find best lag
-    best_lag = find_best_lag(df)
+    # Find best lag and best rolling window
+    best_lag, best_window = find_best_lag_and_window(df)
     cfg["LAG_DAYS"] = best_lag
-    print(f"Optimal Lag: {best_lag} days")
+    cfg["ROLLING_WINDOW_DAYS"] = best_window if best_window else 0
+    print(f"Optimal Lag: {best_lag} days | Optimal Window: {best_window if best_window else 'ALL'} days")
+
+    # Slice the dataframe to the optimal rolling window before tuning the thresholds
+    if best_window:
+        df = df.tail(best_window).copy()
 
     # If lag is > 0, we shift the nymex columns for the threshold tuning so the deltas align!
     if best_lag > 0:
@@ -127,7 +141,7 @@ def main():
 
     save_config(cfg)
     
-    commit_msg = f"Auto-tune [{pd.Timestamp.now().strftime('%Y-%m-%d')}]: Lag={best_lag}. RB({msg_rb}) HO({msg_ho})"
+    commit_msg = f"Auto-tune [{pd.Timestamp.now().strftime('%Y-%m-%d')}]: Lag={best_lag}, Win={best_window if best_window else 'ALL'}. RB({msg_rb}) HO({msg_ho})"
     print(commit_msg)
     git_commit_push(commit_msg)
 
