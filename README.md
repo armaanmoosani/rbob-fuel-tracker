@@ -12,7 +12,7 @@ An autonomous, serverless market tracker designed for independent gas stations a
 - **Smart Alerts**: 
   - **5:30 PM CT Rack Window:** Timed perfectly for evening OPIS/Terminal price releases.
   - **1:30 PM CT Settlement:** Reports the official CME daily settlement price.
-  - **Volatility Swings:** Triggers immediate alerts if the price swings > 2.5% from the last baseline.
+  - **Volatility Swings:** Triggers immediate alerts if the price swings > 1.5% from the last baseline.
   - **Scheduled Summaries:** Provides routine 6-hour updates.
 
 ## Email Layout

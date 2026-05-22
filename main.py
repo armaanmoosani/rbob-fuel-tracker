@@ -731,7 +731,7 @@ if __name__ == "__main__":
         ref = last_alert_price if last_alert_price else all_data[prefix]['open_price']
         swing = ((curr - ref) / ref * 100) if ref else 0.0
         
-        if abs(swing) >= 2.5:
+        if abs(swing) >= 1.5:
             any_swing = True
             ps = '+' if swing > 0 else ''
             swing_strs.append(f"{COMMODITIES[prefix]['name']}: {ps}{swing:.2f}%")
