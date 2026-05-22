@@ -484,7 +484,8 @@ def send_sms(all_data, now, alert_context):
             pct_sign  = '+' if info['daily_pct'] >= 0 else ''
             
             lines.append(f"{cname}")
-            lines.append(f"Now: ${info['current_price']:.4f} ({pct_sign}{info['daily_pct']:.2f}%)")
+            dollar_chg = info['current_price'] - info['open_price']
+            lines.append(f"Now: ${info['current_price']:.4f} ({pct_sign}{info['daily_pct']:.2f}% | {pct_sign}${abs(dollar_chg):.4f})")
             
             if info['high_price'] > 0 and info['low_price'] > 0:
                 lines.append(f"H: ${info['high_price']:.4f} | L: ${info['low_price']:.4f}")
@@ -734,7 +735,8 @@ if __name__ == "__main__":
         if abs(swing) >= 1.5:
             any_swing = True
             ps = '+' if swing > 0 else ''
-            swing_strs.append(f"{COMMODITIES[prefix]['name']}: {ps}{swing:.2f}%")
+            dollar_swing = curr - ref
+            swing_strs.append(f"{COMMODITIES[prefix]['name']}: {ps}{swing:.2f}% ({ps}${abs(dollar_swing):.4f})")
             swing_colors.append('#f97316' if swing > 0 else '#22c55e')
             try:
                 set_repo_variable(f"LAST_SWING_INFO_{prefix}", json.dumps({"date": session_str, "price": round(curr, 4)}))
