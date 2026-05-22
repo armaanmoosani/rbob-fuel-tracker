@@ -156,7 +156,11 @@ def main():
     print("Successfully ingested.")
     
     print("Triggering nightly backtester auto-tune...")
-    subprocess.run(["python", "backtest.py"])
+    try:
+        subprocess.run(["python", "backtest.py"], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Backtester crashed: {e}")
+        send_alert_email("Fuel Tracker Error", "The nightly backtester crashed and could not update the statistical thresholds. Check GitHub Actions logs.")
 
 if __name__ == "__main__":
     main()

@@ -1331,6 +1331,20 @@ def fetch_commodity(prefix, cfg, now, access_token):
     except Exception:
         pass
 
+    if yesterday_close is None:
+        try:
+            import pandas as pd
+            df = pd.read_csv("data/graves_history.csv")
+            lag_days = max(1, APP_CONFIG.get("LAG_DAYS", 1))
+            col_name = "nymex_rb" if "RB" in dynamic_yf_symbol else "nymex_ho"
+            if len(df) >= lag_days:
+                yesterday_close = float(df[col_name].iloc[-lag_days])
+            else:
+                yesterday_close = float(df[col_name].iloc[0])
+            print(f"[{prefix}] yfinance failed. Fell back to local CSV for baseline: {yesterday_close}")
+        except Exception as e:
+            print(f"[{prefix}] CSV fallback also failed: {e}")
+
     baseline_price = yesterday_close if yesterday_close else open_price
     daily_pct = ((current_price - baseline_price) / baseline_price) * 100
 
