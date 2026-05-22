@@ -1,0 +1,28 @@
+name: Daily Price Prompt
+
+on:
+  schedule:
+    # Runs at 22:30 UTC every Monday through Friday
+    # This translates to 5:30 PM Central Daylight Time (or 4:30 PM Standard Time)
+    - cron: '30 22 * * 1-5'
+  workflow_dispatch:
+
+jobs:
+  prompt:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Run Prompt Script
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+        run: |
+          python prompt_prices.py
