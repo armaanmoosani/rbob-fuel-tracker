@@ -42,9 +42,13 @@ def git_commit_push(message):
         print(f"Git commit/push failed: {e}")
 
 def run_tuning(df, nymex_col, rack_col, prefix, cfg):
-    delta_nymex = df[nymex_col].diff() * 100 # cents
-    delta_rack = df[rack_col].diff() * 100 # cents
+    # Drop rows where either is missing so .diff() correctly calculates Monday - Friday
+    df_clean = df.dropna(subset=[nymex_col, rack_col])
     
+    delta_nymex = df_clean[nymex_col].diff() * 100 # cents
+    delta_rack = df_clean[rack_col].diff() * 100 # cents
+    
+    # Drop the first row which will be NaN after diff()
     valid = ~(delta_nymex.isna() | delta_rack.isna())
     delta_nymex = delta_nymex[valid]
     delta_rack = delta_rack[valid]
@@ -77,7 +81,7 @@ def run_tuning(df, nymex_col, rack_col, prefix, cfg):
 def find_best_lag(df):
     correlations = {}
     for lag in range(0, 5):
-        # We want to see if today's rack matches today's NYMEX (lag 0), or yesterday's NYMEX (lag 1)
+        # Shift first, then dropna to ensure we compare shifted days properly
         nymex = df['nymex_rb'].shift(lag)
         rack = df['rack_u']
         
