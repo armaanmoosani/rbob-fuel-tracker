@@ -23,9 +23,9 @@ try:
 except ImportError:
     mcal = None
 
-SCHWAB_APP_KEY       = os.environ['SCHWAB_APP_KEY']
-SCHWAB_APP_SECRET    = os.environ['SCHWAB_APP_SECRET']
-SCHWAB_REFRESH_TOKEN = os.environ['SCHWAB_REFRESH_TOKEN']
+SCHWAB_APP_KEY       = os.environ.get('SCHWAB_APP_KEY', '')
+SCHWAB_APP_SECRET    = os.environ.get('SCHWAB_APP_SECRET', '')
+SCHWAB_REFRESH_TOKEN = os.environ.get('SCHWAB_REFRESH_TOKEN', '')
 GH_PAT               = os.environ['GH_PAT']
 GH_REPO              = os.environ['GH_REPO']
 GMAIL_USER           = os.environ['GMAIL_USER']
@@ -1147,7 +1147,9 @@ def main():
             }
         )
 
-    if now.hour == 14 and now.minute >= 35:
+    local_now = now.astimezone(TZ)
+    
+    if local_now.hour == 14 and local_now.minute >= 35:
         attach_rack_signals(all_data, now)
         send_once_today('VERDICT_1435', "Final Verdict: Exxon Price Predictor", all_data, now, {
             'label': 'Final Verdict',
@@ -1155,9 +1157,9 @@ def main():
             'action_color': '#8b5cf6'
         })
 
-    if now.hour in [8, 12]:
-        send_once_today(f"UPDATE_{now.strftime('%H')}", f"Market Update — {now.strftime('%-I %p')}", all_data, now, {
-            'label': f'Scheduled Market Update — {now.strftime("%-I:%M %p CT")}',
+    if local_now.hour in [8, 12]:
+        send_once_today(f"UPDATE_{local_now.strftime('%H')}", f"Market Update — {local_now.strftime('%-I %p')}", all_data, now, {
+            'label': f'Scheduled Market Update — {local_now.strftime("%-I:%M %p CT")}',
             'action': 'Periodic fuel market snapshot.',
             'action_color': '#475569'
         })
