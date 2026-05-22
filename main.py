@@ -202,6 +202,9 @@ def get_front_month_schwab_symbol(dt, prefix):
 def schwab_to_yfinance_symbol(schwab_symbol):
     return schwab_symbol.lstrip('/') + '.NYM'
 
+def contract_state_prefix(prefix, schwab_symbol):
+    return f"{prefix}_{schwab_symbol.lstrip('/').upper()}"
+
 def get_repo_variable(name):
     url = f"https://api.github.com/repos/{GH_REPO}/actions/variables/{name}"
     res = requests.get(url, headers=GH_HEADERS, timeout=REQUEST_TIMEOUT)
@@ -974,9 +977,10 @@ def fetch_commodity(prefix, cfg, now, access_token):
         chart_intra = None
         chart_5d = None
     else:
-        history_intra = load_price_history(prefix)
+        history_key = contract_state_prefix(prefix, schwab_symbol)
+        history_intra = load_price_history(history_key)
         history_intra = append_price(history_intra, now, current_price)
-        save_price_history(history_intra, prefix)
+        save_price_history(history_intra, history_key)
         chart_intra = generate_intraday_chart(history_intra, current_price, baseline_price, high_price, low_price, daily_pct, cfg['name'])
         chart_5d = generate_5day_chart(history_5d, current_price)
     
@@ -995,7 +999,8 @@ def fetch_commodity(prefix, cfg, now, access_token):
         'sma_3': sma_3,
         'sma_10': sma_10,
         'chart_intraday_b64': chart_intra,
-        'chart_5d_b64': chart_5d
+        'chart_5d_b64': chart_5d,
+        'schwab_symbol': schwab_symbol
     }
 
 
@@ -1062,7 +1067,10 @@ if __name__ == "__main__":
         if raw:
             try:
                 info = json.loads(raw)
-                if info.get("date") == session_str:
+                if (
+                    info.get("date") == session_str
+                    and info.get("schwab_symbol") == all_data[prefix].get('schwab_symbol')
+                ):
                     last_alert_price = float(info.get("price"))
             except Exception:
                 pass
@@ -1079,7 +1087,14 @@ if __name__ == "__main__":
             swing_trigger_desc.append(f"{COMMODITIES[prefix]['name']} {ps}{swing:.2f}%")
             swing_colors.append('#f97316' if swing > 0 else '#22c55e')
             try:
-                set_repo_variable(f"LAST_SWING_INFO_{prefix}", json.dumps({"date": session_str, "price": round(curr, 4)}))
+                set_repo_variable(
+                    f"LAST_SWING_INFO_{prefix}",
+                    json.dumps({
+                        "date": session_str,
+                        "price": round(curr, 4),
+                        "schwab_symbol": all_data[prefix].get('schwab_symbol')
+                    })
+                )
             except Exception:
                 pass
                 
