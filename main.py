@@ -440,6 +440,23 @@ def build_rack_signal(prefix, data, now):
         color = "#64748b"
         instruction = "Do not let this futures move alone drive the truck decision."
 
+    # Immutable Prediction Audit Log
+    try:
+        log_path = os.path.join(DATA_DIR, "prediction_log.csv")
+        file_exists = os.path.exists(log_path)
+        with open(log_path, "a") as f:
+            if not file_exists:
+                f.write("timestamp,commodity,predicted_direction,nymex_move_cents,lag_used,window_used,threshold_used,actual_next_day_move_cents\n")
+            
+            direction = "HIKE" if "BUY" in action else "DROP" if "WAIT" in action else "FLAT"
+            thresh = hike_thresh if "BUY" in action else drop_thresh if "WAIT" in action else 0.0
+            lag = APP_CONFIG.get("LAG_DAYS", 0)
+            window = APP_CONFIG.get("ROLLING_WINDOW_DAYS", 120)
+            
+            f.write(f"{now.isoformat()},{prefix},{direction},{change_cents:.2f},{lag},{window},{thresh:.2f},PENDING\n")
+    except Exception as e:
+        print(f"Failed to write prediction log: {e}")
+
     return {
         "action": action,
         "label": label,
