@@ -1293,8 +1293,7 @@ def fetch_commodity(prefix, cfg, now, access_token):
     
     yesterday_close = five_day_high = five_day_low = thirty_day_avg = sma_3 = sma_10 = None
     if data_source == 'schwab' and schwab_close > 0:
-        if APP_CONFIG.get("LAG_DAYS", 0) == 0:
-            yesterday_close = schwab_close
+        yesterday_close = schwab_close
         
     history_5d = []
     try:
