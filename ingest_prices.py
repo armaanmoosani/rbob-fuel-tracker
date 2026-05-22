@@ -10,6 +10,8 @@ from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 import pytz
 from bs4 import BeautifulSoup
+import validate_data
+
 
 GMAIL_USER = os.environ.get('GMAIL_USER')
 GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
@@ -153,6 +155,7 @@ def read_daily_settlement(target_date_str):
 
 def main():
     print("Starting SMS ingest...")
+    validate_data.validate_all(DATA_DIR)
     date_str, prices, already_ingested = check_inbox_for_prices()
     
     if already_ingested:
@@ -196,6 +199,7 @@ def main():
     with open(CSV_PATH, "a") as f:
         f.write(f"{date_str},{rb_stl},{ho_stl},{prices[0]:.4f},{prices[1]:.4f},{prices[2]:.4f}\n")
         
+    validate_data.validate_all(DATA_DIR)
     git_commit_push(f"Ingest Graves Oil prices for {date_str}")
     print("Successfully ingested.")
     

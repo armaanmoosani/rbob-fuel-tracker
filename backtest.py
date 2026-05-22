@@ -5,6 +5,8 @@ import subprocess
 import pandas as pd
 import numpy as np
 from scipy import stats
+import validate_data
+
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 CSV_PATH = os.path.join(DATA_DIR, "graves_history.csv")
@@ -110,6 +112,7 @@ def find_best_lag_and_window(df):
 
 def main():
     print("Starting backtest engine...")
+    validate_data.validate_all(DATA_DIR)
     cfg = load_config()
     
     if not os.path.exists(CSV_PATH):

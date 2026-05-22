@@ -9,6 +9,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 from datetime import datetime
 import json
+import validate_data
+
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 REPORTS_DIR = os.path.join(os.path.dirname(__file__), "reports")
@@ -21,6 +23,7 @@ def main():
     if not os.path.exists(CSV_PATH):
         print(f"Historical database missing at: {CSV_PATH}")
         return
+    validate_data.validate_all(DATA_DIR)
     if not os.path.exists(LOG_PATH):
         print(f"No prediction log found at: {LOG_PATH}. Waiting for first prediction run.")
         return
