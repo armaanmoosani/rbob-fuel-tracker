@@ -45,7 +45,14 @@ COMMODITIES = {
     'HO': {
         'name': 'Diesel',
         'yf_symbol': 'HO=F',
-        'display_name': 'DIESEL (/HO)'
+        'display_name': 'DIESEL (/HO)',
+        'hidden': False
+    },
+    'CL': {
+        'name': 'Crude Oil',
+        'yf_symbol': 'CL=F',
+        'display_name': 'CRUDE OIL (/CL)',
+        'hidden': True
     }
 }
 
@@ -421,6 +428,33 @@ def build_html_email(subject, all_data, now, alert_context):
       </p>
     </div>'''
 
+    crack_spread_html = ''
+    if 'RB' in all_data and 'HO' in all_data and 'CL' in all_data:
+        rb = all_data['RB']
+        ho = all_data['HO']
+        cl = all_data['CL']
+        if rb['current_price'] and ho['current_price'] and cl['current_price']:
+            crack = (rb['current_price'] * 28) + (ho['current_price'] * 14) - cl['current_price']
+            crack_str = f"${crack:.2f}"
+            trend_str = ""
+            if rb['yesterday_close'] and ho['yesterday_close'] and cl['yesterday_close']:
+                yest_crack = (rb['yesterday_close'] * 28) + (ho['yesterday_close'] * 14) - cl['yesterday_close']
+                crack_chg = crack - yest_crack
+                sign = '+' if crack_chg >= 0 else ''
+                trend_color = '#22c55e' if crack_chg >= 0 else '#ef4444'
+                trend_text = "Widening (WAIT - Future rack prices may drop)" if crack_chg >= 0 else "Shrinking (BUY - Future rack prices may spike)"
+                trend_str = f'<span style="color:{trend_color};font-weight:700;">{sign}${crack_chg:.2f} / bbl</span> &nbsp;&middot;&nbsp; <span>{trend_text}</span>'
+            
+            crack_spread_html = f'''
+            <!-- MARKET INTELLIGENCE -->
+            <div style="background:#ffffff;margin-top:15px;padding:16px 20px;border-left:4px solid #6366f1;border-right:1px solid #e2e8f0;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;">
+              <p style="margin:0 0 4px;font-size:10px;color:#6366f1;text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">Market Intelligence</p>
+              <p style="margin:0 0 6px;font-size:16px;color:#0f172a;font-weight:700;">3:2:1 Crack Spread: {crack_str}</p>
+              <p style="margin:0 0 8px;font-size:12px;color:#475569;">{trend_str}</p>
+              <p style="margin:0;font-size:11px;color:#64748b;line-height:1.5;"><strong>Cheat Sheet:</strong> The profit margin refineries make. When it widens, refineries overproduce (creating rack price drops). When it shrinks, they cut production (creating shortages and price spikes).</p>
+            </div>
+            '''
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -444,6 +478,7 @@ def build_html_email(subject, all_data, now, alert_context):
           
           {action_line}
           {''.join(blocks)}
+          {crack_spread_html}
           
           <!-- FOOTER -->
           <div style="background:#f1f5f9;border-radius:0 0 10px 10px;padding:10px 20px;border:1px solid #e2e8f0;border-top:none;">
@@ -489,6 +524,22 @@ def send_sms(all_data, now, alert_context):
             
             if info['high_price'] > 0 and info['low_price'] > 0:
                 lines.append(f"H: ${info['high_price']:.4f} | L: ${info['low_price']:.4f}")
+            lines.append("")
+            
+    if 'RB' in all_data and 'HO' in all_data and 'CL' in all_data:
+        rb = all_data['RB']
+        ho = all_data['HO']
+        cl = all_data['CL']
+        if rb['current_price'] and ho['current_price'] and cl['current_price']:
+            crack = (rb['current_price'] * 28) + (ho['current_price'] * 14) - cl['current_price']
+            lines.append(f"CRACK SPREAD: ${crack:.2f}/bbl")
+            if rb['yesterday_close'] and ho['yesterday_close'] and cl['yesterday_close']:
+                yest_crack = (rb['yesterday_close'] * 28) + (ho['yesterday_close'] * 14) - cl['yesterday_close']
+                crack_chg = crack - yest_crack
+                sign = '+' if crack_chg >= 0 else ''
+                trend = "Widening (WAIT - Prices may drop)" if crack_chg >= 0 else "Shrinking (BUY - Prices may spike)"
+                lines[-1] = f"CRACK SPREAD: ${crack:.2f} ({sign}${crack_chg:.2f})"
+                lines.append(f"Trend: {trend}")
             lines.append("")
             
     lines.append(f"{time_str}")
