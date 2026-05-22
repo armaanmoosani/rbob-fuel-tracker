@@ -30,8 +30,8 @@ GH_PAT               = os.environ['GH_PAT']
 GH_REPO              = os.environ['GH_REPO']
 GMAIL_USER           = os.environ['GMAIL_USER']
 GMAIL_APP_PASSWORD   = os.environ['GMAIL_APP_PASSWORD']
-TO_EMAIL             = os.environ['TO_EMAIL']
-TO_PHONE_SMS         = os.environ.get('PHONE_SMS_ADDRESS', '')
+TO_EMAIL             = [e.strip() for e in os.environ['TO_EMAIL'].split(',') if e.strip()]
+TO_PHONE_SMS         = [p.strip() for p in os.environ.get('PHONE_SMS_ADDRESS', os.environ['TO_EMAIL']).split(',') if p.strip()]
 
 GH_HEADERS = {
     "Authorization": f"token {GH_PAT}",
@@ -939,13 +939,18 @@ def send_sms(all_data, now, alert_context):
         sms_msg = MIMEText(body)
         sms_msg['Subject'] = ''
         sms_msg['From']    = GMAIL_USER
-        sms_msg['To']      = TO_PHONE_SMS
+        
         srv = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)
         srv.starttls()
         srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-        srv.sendmail(GMAIL_USER, TO_PHONE_SMS, sms_msg.as_string())
+        
+        phones = [p.strip() for p in TO_PHONE_SMS.split(',')]
+        for phone in phones:
+            sms_msg['To'] = phone
+            srv.sendmail(GMAIL_USER, phone, sms_msg.as_string())
+            print(f"SMS sent to gateway ({phone})")
+            
         srv.quit()
-        print(f"SMS sent to gateway ({TO_PHONE_SMS})")
     except Exception as e:
         print(f"SMS send failed (non-fatal): {e}")
 
@@ -956,7 +961,8 @@ def send_email(subject, all_data, now, alert_context):
         msg = MIMEMultipart('related')
         msg['Subject'] = subject
         msg['From']    = GMAIL_USER
-        msg['To']      = TO_EMAIL
+        
+        emails = [e.strip() for e in TO_EMAIL.split(',')]
         
         alt = MIMEMultipart('alternative')
         alt.attach(MIMEText("Please view in an HTML-compatible email client.", 'plain'))
@@ -978,9 +984,13 @@ def send_email(subject, all_data, now, alert_context):
         server = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)
         server.starttls()
         server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-        server.sendmail(GMAIL_USER, TO_EMAIL, msg.as_string())
+        
+        for email_addr in emails:
+            msg.replace_header('To', email_addr) if 'To' in msg else msg.add_header('To', email_addr)
+            server.sendmail(GMAIL_USER, email_addr, msg.as_string())
+            print(f"Email sent: {subject} to {email_addr}")
+            
         server.quit()
-        print(f"Email sent: {subject}")
     except Exception as e:
         print(f"Email send failed: {e}")
 
@@ -1002,6 +1012,168 @@ def send_once_today(key, subject, all_data, now, alert_context):
     except Exception as e:
         print(f"Warning: could not save lock {db_key}: {e}")
 
+def send_daily_prompt(now):
+    # Only run at 7:30 PM CT (19:30) on weekdays
+    if now.weekday() > 4 or not (now.hour == 19 and now.minute >= 30):
+        return
+
+    session_str = get_session_date_str(now)
+    db_key = "SENT_DAILY_PROMPT"
+    
+    # Use repo variable checkpoint to ensure it only sends once
+    last_sent = get_repo_variable(db_key)
+    if last_sent == session_str:
+        return
+        
+    print("Time is 19:30 CT. Sending daily SMS price prompt...")
+    body = "Please reply with today's Graves Oil prices.\nFormat: Unleaded Premium Diesel\n(e.g. 2.10 2.30 2.50)"
+    
+    try:
+        sms_msg = MIMEText(body)
+        sms_msg['Subject'] = 'Graves Oil Prices Needed'
+        sms_msg['From'] = GMAIL_USER
+        
+        srv = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)
+        srv.starttls()
+        srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+        
+        phones = [p.strip() for p in TO_PHONE_SMS.split(',')]
+        for phone in phones:
+            sms_msg['To'] = phone
+            srv.sendmail(GMAIL_USER, phone, sms_msg.as_string())
+            print(f"Daily prompt sent to {phone}")
+            
+        srv.quit()
+        
+        # Checkpoint successful send
+        set_repo_variable(db_key, session_str)
+    except Exception as e:
+        print(f"Failed to send daily prompt: {e}")
+
+def main():
+    start_time = datetime.now(timezone.utc)
+    now = datetime.now(TZ)
+    
+    if not is_market_open(now):
+        print(f"Market is closed at {now}. Exiting to prevent stale alerts.")
+        return
+
+    auth_header = base64.b64encode(f"{SCHWAB_APP_KEY}:{SCHWAB_APP_SECRET}".encode()).decode()
+    try:
+        auth_res = requests.post(
+            "https://api.schwabapi.com/v1/oauth/token",
+            data={"grant_type": "refresh_token", "refresh_token": SCHWAB_REFRESH_TOKEN},
+            headers={"Authorization": f"Basic {auth_header}", "Content-Type": "application/x-www-form-urlencoded"},
+            timeout=REQUEST_TIMEOUT
+        )
+        auth_res.raise_for_status()
+        auth_json = auth_res.json()
+        access_token = auth_json['access_token']
+        new_refresh = auth_json.get('refresh_token')
+        print("Schwab OAuth refreshed")
+    except Exception as e:
+        print(f"FATAL: OAuth refresh failed: {e}")
+        sys.exit(1)
+
+    if new_refresh and new_refresh != SCHWAB_REFRESH_TOKEN:
+        try:
+            update_github_secret(new_refresh)
+            print("Schwab refresh token rotated in GitHub Secrets")
+        except Exception as e:
+            print(f"FATAL: GitHub secret update failed: {e}")
+            sys.exit(1)
+    else:
+        print("Schwab did not return a new refresh token; keeping existing GitHub Secret")
+
+    all_data = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(COMMODITIES)) as executor:
+        futures = [executor.submit(fetch_commodity, prefix, cfg, now, access_token) for prefix, cfg in COMMODITIES.items()]
+        for future in concurrent.futures.as_completed(futures):
+            res = future.result()
+            if res:
+                all_data[res.pop('prefix')] = res
+
+    session_str = get_session_date_str(now)
+    save_settlement_snapshots(all_data, now)
+    
+    any_swing = False
+    swing_trigger_desc = []
+    swing_colors = []
+    subject_strs = []
+    
+    for prefix in ['RB', 'HO']:
+        if prefix not in all_data: continue
+        
+        pct = all_data[prefix]['daily_pct']
+        ps_sub = '+' if pct > 0 else ''
+        subject_strs.append(f"{COMMODITIES[prefix]['name']}: {ps_sub}{pct:.2f}%")
+        
+        raw = get_repo_variable(f"LAST_SWING_INFO_{prefix}")
+        last_alert_price = None
+        if raw:
+            try:
+                info = json.loads(raw)
+                if (
+                    info.get("date") == session_str
+                    and info.get("schwab_symbol") == all_data[prefix].get('schwab_symbol')
+                ):
+                    last_alert_price = float(info.get("price"))
+            except Exception:
+                pass
+                
+        curr = all_data[prefix]['current_price']
+        baseline = all_data[prefix].get('yesterday_close') or all_data[prefix]['open_price']
+        ref = last_alert_price if last_alert_price else baseline
+        swing = ((curr - ref) / ref * 100) if ref else 0.0
+        
+        if abs(swing) >= 1.5:
+            any_swing = True
+            ps = '+' if swing > 0 else ''
+            dollar_swing = curr - ref
+            swing_trigger_desc.append(f"{COMMODITIES[prefix]['name']} {ps}{swing:.2f}%")
+            swing_colors.append('#f97316' if swing > 0 else '#22c55e')
+            try:
+                set_repo_variable(
+                    f"LAST_SWING_INFO_{prefix}",
+                    json.dumps({
+                        "date": session_str,
+                        "price": round(curr, 4),
+                        "schwab_symbol": all_data[prefix].get('schwab_symbol')
+                    })
+                )
+            except Exception:
+                pass
+                
+    if any_swing:
+        send_email(
+            subject=f"Price Spike: {' | '.join(subject_strs)}",
+            all_data=all_data,
+            now=now,
+            alert_context={
+                'label': 'Price Movement Alert',
+                'action': f"Significant price movement detected from last reference point ({', '.join(swing_trigger_desc)}).",
+                'action_color': swing_colors[0]
+            }
+        )
+
+    if now.hour == 14 and now.minute >= 35:
+        attach_rack_signals(all_data, now)
+        send_once_today('VERDICT_1435', "Final Verdict: Exxon Price Predictor", all_data, now, {
+            'label': 'Final Verdict',
+            'action': 'Comparing the 1:30 PM CT NYMEX settlement-window move to the prior settlement to estimate tonight’s OPIS/Graves rack direction.',
+            'action_color': '#8b5cf6'
+        })
+
+    if now.hour in [8, 12]:
+        send_once_today(f"UPDATE_{now.strftime('%H')}", f"Market Update — {now.strftime('%-I %p')}", all_data, now, {
+            'label': f'Scheduled Market Update — {now.strftime("%-I:%M %p CT")}',
+            'action': 'Periodic fuel market snapshot.',
+            'action_color': '#475569'
+        })
+        
+    send_daily_prompt(now)
+
+    print(f"Total time: {(datetime.now(timezone.utc) - start_time).total_seconds():.1f}s")
 
 def is_market_open(dt):
     def simple_globex_energy_hours(ts):
@@ -1194,14 +1366,6 @@ def fetch_commodity(prefix, cfg, now, access_token):
 
 
 if __name__ == "__main__":
-
-    now = datetime.now(TZ)
-    
-    if not is_market_open(now):
-        print(f"Market is closed at {now}. Exiting to prevent stale alerts.")
-        sys.exit(0)
-
-    
     auth_header = base64.b64encode(f"{SCHWAB_APP_KEY}:{SCHWAB_APP_SECRET}".encode()).decode()
     try:
         auth_res = requests.post(
