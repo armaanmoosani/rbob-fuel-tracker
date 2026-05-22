@@ -856,11 +856,17 @@ if __name__ == "__main__":
     session_str = get_session_date_str(now)
     
     any_swing = False
-    swing_strs = []
+    swing_trigger_desc = []
     swing_colors = []
+    subject_strs = []
     
     for prefix in ['RB', 'HO']:
         if prefix not in all_data: continue
+        
+        pct = all_data[prefix]['daily_pct']
+        ps_sub = '+' if pct > 0 else ''
+        subject_strs.append(f"{COMMODITIES[prefix]['name']}: {ps_sub}{pct:.2f}%")
+        
         raw = get_repo_variable(f"LAST_SWING_INFO_{prefix}")
         last_alert_price = None
         if raw:
@@ -880,7 +886,7 @@ if __name__ == "__main__":
             any_swing = True
             ps = '+' if swing > 0 else ''
             dollar_swing = curr - ref
-            swing_strs.append(f"{COMMODITIES[prefix]['name']}: {ps}{swing:.2f}% ({ps}${abs(dollar_swing):.4f})")
+            swing_trigger_desc.append(f"{COMMODITIES[prefix]['name']} {ps}{swing:.2f}%")
             swing_colors.append('#f97316' if swing > 0 else '#22c55e')
             try:
                 set_repo_variable(f"LAST_SWING_INFO_{prefix}", json.dumps({"date": session_str, "price": round(curr, 4)}))
@@ -889,12 +895,12 @@ if __name__ == "__main__":
                 
     if any_swing:
         send_email(
-            subject=f"Price Move: {' | '.join(swing_strs)}",
+            subject=f"Price Spike: {' | '.join(subject_strs)}",
             all_data=all_data,
             now=now,
             alert_context={
-                'label': f'Price Movement Alert',
-                'action': f"Significant price movement detected from last reference point. {' | '.join(swing_strs)}",
+                'label': 'Price Movement Alert',
+                'action': f"Significant price movement detected from last reference point ({', '.join(swing_trigger_desc)}).",
                 'action_color': swing_colors[0]
             }
         )
