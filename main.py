@@ -440,20 +440,31 @@ def build_rack_signal(prefix, data, now):
         color = "#64748b"
         instruction = "Do not let this futures move alone drive the truck decision."
 
-    # Immutable Prediction Audit Log
+    # Immutable Prediction Audit Log (Idempotent)
     try:
         log_path = os.path.join(DATA_DIR, "prediction_log.csv")
         file_exists = os.path.exists(log_path)
-        with open(log_path, "a") as f:
-            if not file_exists:
-                f.write("timestamp,commodity,predicted_direction,nymex_move_cents,lag_used,window_used,threshold_used,actual_next_day_move_cents\n")
-            
-            direction = "HIKE" if "BUY" in action else "DROP" if "WAIT" in action else "FLAT"
-            thresh = hike_thresh if "BUY" in action else drop_thresh if "WAIT" in action else 0.0
-            lag = APP_CONFIG.get("LAG_DAYS", 0)
-            window = APP_CONFIG.get("ROLLING_WINDOW_DAYS", 120)
-            
-            f.write(f"{now.isoformat()},{prefix},{direction},{change_cents:.2f},{lag},{window},{thresh:.2f},PENDING\n")
+        
+        session_str = now.date().isoformat()
+        already_logged = False
+        if file_exists:
+            with open(log_path, "r") as f:
+                for line in f:
+                    if line.startswith(session_str) and f",{prefix}," in line:
+                        already_logged = True
+                        break
+                        
+        if not already_logged:
+            with open(log_path, "a") as f:
+                if not file_exists:
+                    f.write("timestamp,commodity,predicted_direction,nymex_move_cents,lag_used,window_used,threshold_used,actual_next_day_move_cents\n")
+                
+                direction = "HIKE" if "BUY" in action else "DROP" if "WAIT" in action else "FLAT"
+                thresh = hike_thresh if "BUY" in action else drop_thresh if "WAIT" in action else 0.0
+                lag = APP_CONFIG.get("LAG_DAYS", 0)
+                window = APP_CONFIG.get("ROLLING_WINDOW_DAYS", 120)
+                
+                f.write(f"{now.isoformat()},{prefix},{direction},{change_cents:.2f},{lag},{window},{thresh:.2f},PENDING\n")
     except Exception as e:
         print(f"Failed to write prediction log: {e}")
 
