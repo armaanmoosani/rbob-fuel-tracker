@@ -1157,7 +1157,7 @@ def main():
             'action_color': '#8b5cf6'
         })
 
-    if local_now.hour in [8, 12]:
+    if local_now.hour in [8, 12, 18]:
         send_once_today(f"UPDATE_{local_now.strftime('%H')}", f"Market Update — {local_now.strftime('%-I %p')}", all_data, now, {
             'label': f'Scheduled Market Update — {local_now.strftime("%-I:%M %p CT")}',
             'action': 'Periodic fuel market snapshot.',
