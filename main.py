@@ -1309,11 +1309,7 @@ def fetch_commodity(prefix, cfg, now, access_token):
             today_date = now.date()
             prev_daily = h30d[[d.date() < today_date for d in h30d.index.to_pydatetime()]]
             if not prev_daily.empty and yesterday_close is None:
-                lag_days = max(1, APP_CONFIG.get("LAG_DAYS", 1))
-                if len(prev_daily) >= lag_days:
-                    yesterday_close = float(prev_daily['Close'].iloc[-lag_days])
-                else:
-                    yesterday_close = float(prev_daily['Close'].iloc[0])
+                yesterday_close = float(prev_daily['Close'].iloc[-1])
             thirty_day_avg = float(h30d['Close'].mean())
             if len(h30d) >= 3:
                 sma_3 = float(h30d['Close'].tail(3).mean())
@@ -1326,12 +1322,9 @@ def fetch_commodity(prefix, cfg, now, access_token):
         try:
             import pandas as pd
             df = pd.read_csv("data/graves_history.csv")
-            lag_days = max(1, APP_CONFIG.get("LAG_DAYS", 1))
             col_name = "nymex_rb" if "RB" in dynamic_yf_symbol else "nymex_ho"
-            if len(df) >= lag_days:
-                yesterday_close = float(df[col_name].iloc[-lag_days])
-            else:
-                yesterday_close = float(df[col_name].iloc[0])
+            if not df.empty:
+                yesterday_close = float(df[col_name].iloc[-1])
             print(f"[{prefix}] yfinance failed. Fell back to local CSV for baseline: {yesterday_close}")
         except Exception as e:
             print(f"[{prefix}] CSV fallback also failed: {e}")
