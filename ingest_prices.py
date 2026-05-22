@@ -91,36 +91,40 @@ def check_inbox_for_prices():
 
         # Process the most recent email first
         for num in reversed(messages[0].split()):
-            status, data = mail.fetch(num, '(RFC822)')
-            msg = email.message_from_bytes(data[0][1])
-            body = ""
-            
-            if msg.is_multipart():
-                for part in msg.walk():
-                    ctype = part.get_content_type()
-                    cdispo = str(part.get('Content-Disposition'))
-                    if ctype == 'text/plain' and 'attachment' not in cdispo:
-                        body += part.get_payload(decode=True).decode('utf-8', errors='ignore') + "\n"
-                    elif ctype == 'text/html' and 'attachment' not in cdispo:
-                        html = part.get_payload(decode=True).decode('utf-8', errors='ignore')
-                        body += BeautifulSoup(html, "html.parser").get_text(separator=" ") + "\n"
-            else:
-                payload = msg.get_payload(decode=True)
-                if payload:
-                    body = payload.decode('utf-8', errors='ignore')
-
-            prices = []
-            for key, label in LABELS.items():
-                p = extract_price_near_label(body, label)
-                if p is None or not (1.50 <= p <= 6.00):
-                    break
-                prices.append(p)
+            try:
+                status, data = mail.fetch(num, '(RFC822)')
+                msg = email.message_from_bytes(data[0][1])
+                body = ""
                 
-            if len(prices) == 3:
-                import email.utils
-                email_date = email.utils.parsedate_to_datetime(msg.get('Date'))
-                local_date_str = email_date.astimezone(TZ).date().isoformat()
-                return local_date_str, tuple(prices)
+                if msg.is_multipart():
+                    for part in msg.walk():
+                        ctype = part.get_content_type()
+                        cdispo = str(part.get('Content-Disposition'))
+                        if ctype == 'text/plain' and 'attachment' not in cdispo:
+                            body += part.get_payload(decode=True).decode('utf-8', errors='ignore') + "\n"
+                        elif ctype == 'text/html' and 'attachment' not in cdispo:
+                            html = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                            body += BeautifulSoup(html, "html.parser").get_text(separator=" ") + "\n"
+                else:
+                    payload = msg.get_payload(decode=True)
+                    if payload:
+                        body = payload.decode('utf-8', errors='ignore')
+
+                prices = []
+                for key, label in LABELS.items():
+                    p = extract_price_near_label(body, label)
+                    if p is None or not (1.50 <= p <= 6.00):
+                        break
+                    prices.append(p)
+                    
+                if len(prices) == 3:
+                    import email.utils
+                    email_date = email.utils.parsedate_to_datetime(msg.get('Date'))
+                    local_date_str = email_date.astimezone(TZ).date().isoformat()
+                    return local_date_str, tuple(prices)
+            except Exception as loop_e:
+                print(f"Skipping badly formatted email {num}: {loop_e}")
+                continue
 
         return None, None
     except Exception as e:
