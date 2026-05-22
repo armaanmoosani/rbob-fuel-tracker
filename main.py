@@ -61,6 +61,8 @@ COMMODITIES = {
 REQUEST_TIMEOUT = 20
 MAX_GH_VARIABLE_VALUE_BYTES = 48 * 1024
 MAX_SMS_CHARS = 1200
+RACK_ACTION_THRESHOLD_CENTS = float(os.environ.get('RACK_ACTION_THRESHOLD_CENTS', '1.0'))
+RACK_LEAN_THRESHOLD_CENTS = float(os.environ.get('RACK_LEAN_THRESHOLD_CENTS', '0.5'))
 
 def get_session_start(dt):
     import datetime
@@ -281,6 +283,109 @@ def save_alert_state(state):
         if isinstance(value, str):
             keep[key] = value
     set_repo_variable("ALERT_STATE", json.dumps(keep, sort_keys=True))
+
+def settlement_snapshot_key(prefix):
+    return f"SETTLE_SNAPSHOT_{prefix}"
+
+def load_settlement_snapshot(prefix, data, session_str):
+    raw = get_repo_variable(settlement_snapshot_key(prefix))
+    if not raw:
+        return None
+    try:
+        snapshot = json.loads(raw)
+    except Exception:
+        return None
+    if snapshot.get("date") != session_str:
+        return None
+    if snapshot.get("schwab_symbol") != data.get("schwab_symbol"):
+        return None
+    try:
+        return float(snapshot["price"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+def save_settlement_snapshots(all_data, now):
+    if not (now.hour == 13 and 30 <= now.minute <= 45):
+        return
+    session_str = get_session_date_str(now)
+    for prefix in ['RB', 'HO']:
+        data = all_data.get(prefix)
+        if not data:
+            continue
+        if load_settlement_snapshot(prefix, data, session_str) is not None:
+            continue
+        snapshot = {
+            "date": session_str,
+            "price": round(data['current_price'], 4),
+            "captured_at": now.isoformat(),
+            "schwab_symbol": data.get("schwab_symbol")
+        }
+        try:
+            set_repo_variable(settlement_snapshot_key(prefix), json.dumps(snapshot, sort_keys=True))
+            print(f"[{prefix}] Saved settlement-window snapshot: ${snapshot['price']:.4f}")
+        except Exception as e:
+            print(f"[{prefix}] Warning: could not save settlement snapshot: {e}")
+
+def build_rack_signal(prefix, data, now):
+    yest = data.get('yesterday_close')
+    if not yest:
+        return {
+            "action": "UNKNOWN",
+            "label": "No Signal",
+            "color": "#64748b",
+            "text": f"{COMMODITIES[prefix]['name']}: no prior settlement baseline available.",
+            "change_cents": None,
+            "basis": "unavailable"
+        }
+
+    session_str = get_session_date_str(now)
+    snapshot_price = load_settlement_snapshot(prefix, data, session_str)
+    signal_price = snapshot_price if snapshot_price is not None else data['current_price']
+    basis = "1:30 PM CT settlement-window snapshot" if snapshot_price is not None else "live price proxy"
+    change_cents = (signal_price - yest) * 100
+    name = COMMODITIES[prefix]['name']
+
+    if change_cents >= RACK_ACTION_THRESHOLD_CENTS:
+        action = "BUY_NOW"
+        label = "Hike likely"
+        color = "#ef4444"
+        instruction = "Dispatch before the rack deadline if you need inventory."
+    elif change_cents <= -RACK_ACTION_THRESHOLD_CENTS:
+        action = "WAIT"
+        label = "Drop likely"
+        color = "#22c55e"
+        instruction = "Wait if you can safely defer inventory."
+    elif change_cents >= RACK_LEAN_THRESHOLD_CENTS:
+        action = "LEAN_BUY"
+        label = "Lean hike"
+        color = "#f97316"
+        instruction = "Small edge only; buy only if inventory risk already favors lifting."
+    elif change_cents <= -RACK_LEAN_THRESHOLD_CENTS:
+        action = "LEAN_WAIT"
+        label = "Lean drop"
+        color = "#38bdf8"
+        instruction = "Small edge only; wait only if inventory risk allows it."
+    else:
+        action = "NO_EDGE"
+        label = "No clear edge"
+        color = "#64748b"
+        instruction = "Do not let this futures move alone drive the truck decision."
+
+    return {
+        "action": action,
+        "label": label,
+        "color": color,
+        "text": f"{name}: {label.upper()} ({change_cents:+.2f} c/gal vs prior settle). {instruction}",
+        "change_cents": change_cents,
+        "basis": basis,
+        "signal_price": signal_price,
+        "threshold_cents": RACK_ACTION_THRESHOLD_CENTS
+    }
+
+def attach_rack_signals(all_data, now):
+    for prefix in ['RB', 'HO']:
+        if prefix in all_data:
+            all_data[prefix]['rack_signal'] = build_rack_signal(prefix, all_data[prefix], now)
 
 def append_price(history, ts, price):
     session_start = get_session_start(ts)
@@ -574,12 +679,18 @@ def build_html_email(subject, all_data, now, alert_context):
         ho = all_data.get('HO')
         
         def get_verdict(data, name):
-            if not data or not data.get('yesterday_close'): return ""
-            chg = data['current_price'] - data['yesterday_close']
-            if chg > 0:
-                return f'<span style="color:#ef4444;font-weight:800;">{name} HIKE LIKELY:</span> Market UP. Dispatch truck NOW.<br>'
-            else:
-                return f'<span style="color:#22c55e;font-weight:800;">{name} DROP LIKELY:</span> Market DOWN. Stave off deliveries.<br>'
+            if not data:
+                return ""
+            signal = data.get('rack_signal')
+            if not signal:
+                return ""
+            if signal.get('change_cents') is None:
+                return f'<span style="color:#64748b;font-weight:800;">{name} NO SIGNAL:</span> Missing prior settlement baseline.<br>'
+            return (
+                f'<span style="color:{signal["color"]};font-weight:800;">{name} {signal["label"].upper()}:</span> '
+                f'{signal["change_cents"]:+.2f} c/gal vs prior settle. '
+                f'<span style="color:#64748b;">Basis: {signal["basis"]}.</span><br>'
+            )
                 
         v_rb = get_verdict(rb, 'UNLEADED')
         v_ho = get_verdict(ho, 'DIESEL')
@@ -591,6 +702,9 @@ def build_html_email(subject, all_data, now, alert_context):
       </p>
       <p style="margin:0;font-size:13px;color:#0f172a;line-height:1.6;">
         {v_rb}{v_ho}
+      </p>
+      <p style="margin:8px 0 0;font-size:11px;color:#64748b;line-height:1.5;">
+        Action threshold: +/-{RACK_ACTION_THRESHOLD_CENTS:.1f} c/gal. Smaller moves are treated as low-confidence because OPIS rack postings also reflect local spot basis and supplier behavior.
       </p>
     </div>'''
     elif alert_context.get('action'):
@@ -619,7 +733,7 @@ def build_html_email(subject, all_data, now, alert_context):
                 crack_chg = crack - yest_crack
                 sign = '+' if crack_chg >= 0 else ''
                 trend_color = '#22c55e' if crack_chg >= 0 else '#ef4444'
-                trend_text = "Widening (Gasoline rallying -> Consider BUY)" if crack_chg >= 0 else "Shrinking (Gasoline dropping -> Consider WAIT)"
+                trend_text = "Widening refinery margin" if crack_chg >= 0 else "Shrinking refinery margin"
                 trend_str = f'<span style="color:{trend_color};font-weight:700;">{sign}${crack_chg:.2f} / bbl</span> &nbsp;&middot;&nbsp; <span>{trend_text}</span>'
             
             crack_spread_html = f'''
@@ -628,7 +742,7 @@ def build_html_email(subject, all_data, now, alert_context):
               <p style="margin:0 0 4px;font-size:10px;color:#6366f1;text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">Market Intelligence</p>
               <p style="margin:0 0 6px;font-size:16px;color:#0f172a;font-weight:700;">3:2:1 Crack Spread: {crack_str}</p>
               <p style="margin:0 0 8px;font-size:12px;color:#475569;">{trend_str}</p>
-              <p style="margin:0;font-size:11px;color:#64748b;line-height:1.5;"><strong>Cheat Sheet:</strong> When the spread widens, it means gasoline is surging faster than crude oil, indicating strong demand. Rack prices will likely jump tonight (BUY). When it shrinks, gasoline prices are lagging, indicating weak demand (WAIT).</p>
+              <p style="margin:0;font-size:11px;color:#64748b;line-height:1.5;"><strong>Use:</strong> Treat this as market context, not a truck-dispatch signal. The rack decision should come from the product-specific RB/HO cents-per-gallon move versus prior settlement.</p>
             </div>
             '''
 
@@ -694,15 +808,15 @@ def send_sms(all_data, now, alert_context):
         rb = all_data.get('RB')
         ho = all_data.get('HO')
         
-        if rb and rb['yesterday_close']:
-            chg = rb['current_price'] - rb['yesterday_close']
-            if chg > 0: lines.append("Gas: HIKE (Buy Now)")
-            else: lines.append("Gas: DROP (Wait)")
+        if rb and rb.get('rack_signal'):
+            signal = rb['rack_signal']
+            if signal.get('change_cents') is not None:
+                lines.append(f"Gas: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
             
-        if ho and ho['yesterday_close']:
-            chg = ho['current_price'] - ho['yesterday_close']
-            if chg > 0: lines.append("Diesel: HIKE (Buy Now)")
-            else: lines.append("Diesel: DROP (Wait)")
+        if ho and ho.get('rack_signal'):
+            signal = ho['rack_signal']
+            if signal.get('change_cents') is not None:
+                lines.append(f"Diesel: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
             
         lines.append("")
     
@@ -742,7 +856,7 @@ def send_sms(all_data, now, alert_context):
                 yest_crack = (rb['yesterday_close'] * 28) + (ho['yesterday_close'] * 14) - cl['yesterday_close']
                 crack_chg = crack - yest_crack
                 sign = '+' if crack_chg >= 0 else ''
-                trend = "Widening (Gasoline rallying -> Consider BUY)" if crack_chg >= 0 else "Shrinking (Gasoline dropping -> Consider WAIT)"
+                trend = "Widening refinery margin" if crack_chg >= 0 else "Shrinking refinery margin"
                 lines[-1] = f"CRACK SPREAD: ${crack:.2f} ({sign}${crack_chg:.2f})"
                 lines.append(f"Trend: {trend}")
             lines.append("")
@@ -1049,6 +1163,7 @@ if __name__ == "__main__":
                 all_data[res.pop('prefix')] = res
 
     session_str = get_session_date_str(now)
+    save_settlement_snapshots(all_data, now)
     
     any_swing = False
     swing_trigger_desc = []
@@ -1111,9 +1226,10 @@ if __name__ == "__main__":
         )
 
     if now.hour == 14 and now.minute >= 35:
+        attach_rack_signals(all_data, now)
         send_once_today('VERDICT_1435', "Final Verdict: Exxon Price Predictor", all_data, now, {
             'label': 'Final Verdict',
-            'action': 'Comparing 1:30 PM Settlement to Yesterday to predict 6:00 PM Exxon Rack change.',
+            'action': 'Comparing the 1:30 PM CT NYMEX settlement-window move to the prior settlement to estimate tonight’s OPIS/Graves rack direction.',
             'action_color': '#8b5cf6'
         })
 
