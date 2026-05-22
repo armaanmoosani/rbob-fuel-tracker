@@ -7,12 +7,11 @@ import base64
 import smtplib
 import matplotlib
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
-import matplotlib.dates as mdates
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from datetime import datetime, date, timezone
+from matplotlib.figure import Figure
 import requests
 import pytz
 import yfinance as yf
@@ -182,7 +181,8 @@ def generate_intraday_chart(history, current_price, open_price, high_price, low_
     grid_color = '#e2e8f0'
     text_color = '#64748b'
 
-    fig, ax = plt.subplots(figsize=(12, 5.5))
+    fig = Figure(figsize=(12, 5.5))
+    ax = fig.subplots()
     fig.patch.set_facecolor(bg_dark)
     ax.set_facecolor(bg_panel)
 
@@ -201,10 +201,11 @@ def generate_intraday_chart(history, current_price, open_price, high_price, low_
     ax.annotate(f'  ${current_price:.4f}', xy=(times[-1], prices[-1]),
                 color='#22c55e', fontsize=18, fontweight='bold', va='center')
 
+    import matplotlib.dates as mdates
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%-I:%M %p', tz=TZ))
     ax.xaxis.set_major_locator(mdates.AutoDateLocator())
-    plt.xticks(rotation=0, ha='center', color=text_color, fontsize=14)
-    plt.yticks(color=text_color, fontsize=14)
+    ax.tick_params(axis='x', rotation=0, colors=text_color, labelsize=14)
+    ax.tick_params(axis='y', colors=text_color, labelsize=14)
     ax.set_ylabel('$/gal', color=text_color, fontsize=16)
 
     pct_sign = '+' if is_up else ''
@@ -217,10 +218,9 @@ def generate_intraday_chart(history, current_price, open_price, high_price, low_
         spine.set_edgecolor(grid_color)
     ax.tick_params(colors=text_color)
     ax.grid(True, color=grid_color, linewidth=0.5, alpha=0.5)
-    plt.tight_layout()
+    fig.tight_layout()
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=180, bbox_inches='tight', facecolor=bg_dark)
-    plt.close()
+    fig.savefig(buf, format='png', dpi=180, bbox_inches='tight', facecolor=bg_dark)
     buf.seek(0)
     return base64.b64encode(buf.read()).decode()
 
@@ -235,7 +235,8 @@ def generate_5day_chart(history_5d, current_price):
     text_color = '#64748b'
     line_color = '#60a5fa'
 
-    fig, ax = plt.subplots(figsize=(12, 4.0))
+    fig = Figure(figsize=(12, 4.0))
+    ax = fig.subplots()
     fig.patch.set_facecolor(bg_dark)
     ax.set_facecolor(bg_panel)
 
@@ -246,10 +247,11 @@ def generate_5day_chart(history_5d, current_price):
     ax.annotate(f'  ${current_price:.4f}', xy=(times[-1], prices[-1]),
                 color='#22c55e', fontsize=18, fontweight='bold', va='center')
 
+    import matplotlib.dates as mdates
     ax.xaxis.set_major_formatter(mdates.DateFormatter('%a', tz=TZ))
     ax.xaxis.set_major_locator(mdates.DayLocator(tz=TZ))
-    plt.xticks(rotation=0, ha='center', color=text_color, fontsize=14)
-    plt.yticks(color=text_color, fontsize=14)
+    ax.tick_params(axis='x', rotation=0, colors=text_color, labelsize=14)
+    ax.tick_params(axis='y', colors=text_color, labelsize=14)
     ax.set_ylabel('$/gal', color=text_color, fontsize=16)
     ax.set_title('5-Day Price Trend', color='#e2e8f0', fontsize=20, fontweight='bold', pad=10)
 
@@ -258,10 +260,9 @@ def generate_5day_chart(history_5d, current_price):
     ax.tick_params(colors=text_color)
     ax.grid(True, color=grid_color, linewidth=0.5, alpha=0.5)
     ax.xaxis.grid(True, color=grid_color, linewidth=0.8, alpha=0.4)
-    plt.tight_layout()
+    fig.tight_layout()
     buf = io.BytesIO()
-    plt.savefig(buf, format='png', dpi=180, bbox_inches='tight', facecolor=bg_dark)
-    plt.close()
+    fig.savefig(buf, format='png', dpi=180, bbox_inches='tight', facecolor=bg_dark)
     buf.seek(0)
     return base64.b64encode(buf.read()).decode()
 
@@ -726,6 +727,7 @@ def fetch_commodity(prefix, cfg, now, access_token):
         open_price    = float(quote['openPrice'])
         high_price    = float(quote.get('highPrice', 0.0))
         low_price     = float(quote.get('lowPrice', 0.0))
+        schwab_close  = float(quote.get('closePrice', 0.0))
         data_source   = 'schwab'
         print(f"[{prefix}] Schwab success")
     except Exception as e:
@@ -759,6 +761,9 @@ def fetch_commodity(prefix, cfg, now, access_token):
     if not open_price: open_price = current_price
     
     yesterday_close = five_day_high = five_day_low = thirty_day_avg = sma_3 = sma_10 = None
+    if data_source == 'schwab' and schwab_close > 0:
+        yesterday_close = schwab_close
+        
     history_5d = []
     try:
         yf_t = yf.Ticker(cfg['yf_symbol'])
@@ -769,7 +774,7 @@ def fetch_commodity(prefix, cfg, now, access_token):
             five_day_low  = float(h5d['Low'].min())
             today_date = now.date()
             prev = h5d[[d.date() < today_date for d in h5d.index.to_pydatetime()]]
-            if not prev.empty: yesterday_close = float(prev['Close'].iloc[-1])
+            if not prev.empty and yesterday_close is None: yesterday_close = float(prev['Close'].iloc[-1])
         h30d = yf_t.history(period='1mo', interval='1d')
         if not h30d.empty:
             thirty_day_avg = float(h30d['Close'].mean())
