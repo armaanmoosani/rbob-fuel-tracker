@@ -107,23 +107,30 @@ def main():
     df['cumulative_savings'] = savings_history
     
     # Plotting
-    plt.figure(figsize=(10, 6))
+    fig = plt.figure(figsize=(10, 6))
+    ax = fig.subplots()
+    fig.patch.set_facecolor('#ffffff')
+    ax.set_facecolor('#f8fafc')
     
     # Plot actual savings
     dates = [d.split('T')[0] for d in df['timestamp']]
-    plt.plot(dates, savings_history, marker='o', label='Cumulative Savings', color='#22c55e', linewidth=2)
+    ax.plot(dates, savings_history, marker='o', markersize=8, label='Cumulative Savings', color='#22c55e', linewidth=3)
     
     # Rolling 4-week trend (approx 20 trading days if we had 1 alert per day, but since alerts are sparse, we'll just do rolling 5 alerts)
     if len(df) >= 5:
         trend = df['cumulative_savings'].rolling(window=5, min_periods=1).mean()
-        plt.plot(dates, trend, linestyle='--', color='#3b82f6', label='Rolling Trend')
+        ax.plot(dates, trend, linestyle='--', color='#3b82f6', linewidth=2, label='Rolling Trend (5 alerts)')
 
-    plt.axhline(0, color='gray', linestyle='-', linewidth=1)
-    plt.title('Cumulative Expected Savings (¢/gal)', fontsize=14)
-    plt.ylabel('Cents per Gallon Saved', fontsize=12)
-    plt.xlabel('Alert Date', fontsize=12)
+    ax.axhline(0, color='#94a3b8', linestyle='-', linewidth=1.5)
+    ax.set_title('Cumulative Expected Savings (¢/gal)', fontsize=16, fontweight='bold', color='#1e293b', pad=20)
+    ax.set_ylabel('Cents per Gallon Saved', fontsize=12, color='#475569')
+    ax.set_xlabel('Alert Date', fontsize=12, color='#475569')
+    ax.tick_params(colors='#64748b')
+    for spine in ax.spines.values():
+        spine.set_color('#e2e8f0')
+    ax.grid(color='#e2e8f0', linestyle='--', alpha=0.7)
     plt.xticks(rotation=45)
-    plt.legend()
+    ax.legend(frameon=True, facecolor='#ffffff', edgecolor='#e2e8f0')
     plt.tight_layout()
     
     report_date = datetime.now().strftime("%Y-%m-%d")
@@ -144,24 +151,69 @@ def main():
     subject = f"Weekly Performance Report - {report_date}"
     
     html = f"""
+    <!DOCTYPE html>
     <html>
-      <body style="font-family: Arial, sans-serif; color: #333;">
-        <h2 style="color: #1e293b;">Graves Oil - Weekly Performance Dashboard</h2>
-        <p><strong>Cumulative Savings:</strong> {cumulative_savings_cents:+.2f} ¢/gal</p>
-        <p><strong>Total Alerts Fired:</strong> {total_alerts}</p>
-        
-        <h3>Confusion Matrix Breakdown</h3>
-        <ul>
-            <li><strong>Correct Hikes Predicted:</strong> {correct_hikes}</li>
-            <li><strong>Correct Drops Predicted:</strong> {correct_drops}</li>
-            <li><strong>False Alarms (Flat Next Day):</strong> {false_flat} <span style="color: #64748b; font-size: 0.9em;">(No loss, just bought early)</span></li>
-            <li><strong>False Alarms (Wrong Direction):</strong> {false_wrong_dir} <span style="color: #ef4444; font-size: 0.9em;">(Real loss)</span></li>
-            <li><strong>Missed Moves (Predicted Flat):</strong> {missed_moves}</li>
-        </ul>
-        
-        <p>The cumulative savings chart is attached below.</p>
-        <img src="cid:chart_img" style="max-width: 100%; height: auto; border: 1px solid #e2e8f0; border-radius: 4px;" />
-      </body>
+    <head>
+        <meta charset="utf-8">
+    </head>
+    <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px;">
+        <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);">
+            <!-- Header -->
+            <div style="background-color: #1e293b; padding: 24px; text-align: center;">
+                <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">Weekly Performance Report</h1>
+                <p style="margin: 8px 0 0 0; color: #94a3b8; font-size: 14px;">Graves Oil Predictive Engine</p>
+            </div>
+            
+            <div style="padding: 32px 24px;">
+                <!-- KPI Cards -->
+                <div style="display: table; width: 100%; margin-bottom: 24px;">
+                    <div style="display: table-cell; width: 48%; background-color: #f1f5f9; padding: 16px; border-radius: 6px; text-align: center;">
+                        <div style="color: #64748b; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Cumulative Savings</div>
+                        <div style="color: #22c55e; font-size: 28px; font-weight: 700; margin-top: 8px;">{cumulative_savings_cents:+.2f} &cent;/gal</div>
+                    </div>
+                    <div style="display: table-cell; width: 4%;"></div>
+                    <div style="display: table-cell; width: 48%; background-color: #f1f5f9; padding: 16px; border-radius: 6px; text-align: center;">
+                        <div style="color: #64748b; font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Total Alerts Fired</div>
+                        <div style="color: #0f172a; font-size: 28px; font-weight: 700; margin-top: 8px;">{total_alerts}</div>
+                    </div>
+                </div>
+
+                <!-- Confusion Matrix -->
+                <h3 style="color: #334155; font-size: 16px; margin: 0 0 16px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;">Confusion Matrix</h3>
+                <table style="width: 100%; border-collapse: collapse; margin-bottom: 32px; font-size: 14px;">
+                    <tr style="border-bottom: 1px solid #e2e8f0;">
+                        <td style="padding: 12px 0; color: #475569;">Correct Hikes Predicted <span style="color: #94a3b8; font-size: 12px;">(Saved money)</span></td>
+                        <td style="padding: 12px 0; text-align: right; font-weight: 600; color: #22c55e;">{correct_hikes}</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #e2e8f0;">
+                        <td style="padding: 12px 0; color: #475569;">Correct Drops Predicted <span style="color: #94a3b8; font-size: 12px;">(Avoided loss)</span></td>
+                        <td style="padding: 12px 0; text-align: right; font-weight: 600; color: #22c55e;">{correct_drops}</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #e2e8f0;">
+                        <td style="padding: 12px 0; color: #475569;">False Alarms <span style="color: #94a3b8; font-size: 12px;">(Flat Next Day &mdash; No loss)</span></td>
+                        <td style="padding: 12px 0; text-align: right; font-weight: 600; color: #f59e0b;">{false_flat}</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #e2e8f0;">
+                        <td style="padding: 12px 0; color: #475569;">False Alarms <span style="color: #ef4444; font-size: 12px;">(Wrong Direction &mdash; Real loss)</span></td>
+                        <td style="padding: 12px 0; text-align: right; font-weight: 600; color: #ef4444;">{false_wrong_dir}</td>
+                    </tr>
+                    <tr>
+                        <td style="padding: 12px 0; color: #475569;">Missed Moves <span style="color: #94a3b8; font-size: 12px;">(Predicted Flat)</span></td>
+                        <td style="padding: 12px 0; text-align: right; font-weight: 600; color: #64748b;">{missed_moves}</td>
+                    </tr>
+                </table>
+
+                <!-- Chart -->
+                <h3 style="color: #334155; font-size: 16px; margin: 0 0 16px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px;">Performance Trend</h3>
+                <img src="cid:chart_img" style="width: 100%; max-width: 600px; height: auto; border: 1px solid #e2e8f0; border-radius: 6px;" alt="Cumulative Savings Chart" />
+            </div>
+            
+            <!-- Footer -->
+            <div style="background-color: #f8fafc; padding: 16px; text-align: center; border-top: 1px solid #e2e8f0;">
+                <p style="margin: 0; color: #94a3b8; font-size: 12px;">Automated by Graves Oil Pricing Predictor</p>
+            </div>
+        </div>
+    </body>
     </html>
     """
     
