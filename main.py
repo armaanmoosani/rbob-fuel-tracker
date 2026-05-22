@@ -210,7 +210,7 @@ def generate_intraday_chart(history, current_price, open_price, high_price, low_
 
     pct_sign = '+' if is_up else ''
     ax.set_title(
-        f'{commodity_name} Intraday   {pct_sign}{daily_pct:.2f}% vs close   '
+        f'{commodity_name} Intraday   {pct_sign}{daily_pct:.2f}% vs yest. close   '
         f'as of {times[-1].strftime("%-I:%M %p CT")}',
         color='#e2e8f0', fontsize=20, fontweight='bold', pad=12
     )
@@ -290,6 +290,7 @@ def build_html_block(prefix, info, now):
     
     baseline_price = yesterday_close if yesterday_close else open_price
     dollar_chg = current_price - baseline_price
+    dollar_str = f"+${dollar_chg:.4f}" if dollar_chg >= 0 else f"-${abs(dollar_chg):.4f}"
 
     price_range  = (high_price - low_price) if (high_price > 0 and low_price > 0) else 0
     range_pct    = ((current_price - low_price) / price_range * 100) if price_range > 0 else 50.0
@@ -356,8 +357,8 @@ def build_html_block(prefix, info, now):
       </p>
       <div style="display:inline-block;margin-top:9px;padding:4px 13px;background:{pct_bg};border-radius:20px;border:1px solid {pct_color}33;">
         <span style="font-size:14px;font-weight:700;color:{pct_color};">{arrow}&nbsp;{pct_sign}{daily_pct:.2f}%</span>
-        <span style="font-size:12px;color:{pct_color};opacity:0.8;">&nbsp;({pct_sign}${dollar_chg:.4f})</span>
-        <span style="font-size:10px;color:#64748b;">&nbsp;vs close</span>
+        <span style="font-size:12px;color:{pct_color};opacity:0.8;">&nbsp;({dollar_str})</span>
+        <span style="font-size:10px;color:#64748b;">&nbsp;vs yest. close</span>
       </div>
     </div>
 
@@ -379,7 +380,7 @@ def build_html_block(prefix, info, now):
           </td>
           <td width="25%" style="padding:7px 10px 10px;text-align:center;">
             <p style="margin:0;font-size:8px;color:#64748b;text-transform:uppercase;">$ Change</p>
-            <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:{pct_color};">{pct_sign}${dollar_chg:.4f}</p>
+            <p style="margin:4px 0 0;font-size:14px;font-weight:600;color:{pct_color};">{dollar_str}</p>
           </td>
         </tr>
       </table>
@@ -591,7 +592,8 @@ def send_sms(all_data, now, alert_context):
             lines.append(f"{cname}")
             baseline_price = info.get('yesterday_close') or info['open_price']
             dollar_chg = info['current_price'] - baseline_price
-            lines.append(f"Now: ${info['current_price']:.4f} ({pct_sign}{info['daily_pct']:.2f}% | {pct_sign}${abs(dollar_chg):.4f})")
+            dollar_str = f"+${dollar_chg:.4f}" if dollar_chg >= 0 else f"-${abs(dollar_chg):.4f}"
+            lines.append(f"Now: ${info['current_price']:.4f} ({pct_sign}{info['daily_pct']:.2f}% | {dollar_str})")
             
             if info['high_price'] > 0 and info['low_price'] > 0:
                 lines.append(f"H: ${info['high_price']:.4f} | L: ${info['low_price']:.4f}")
