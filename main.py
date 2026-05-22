@@ -65,7 +65,8 @@ MAX_GH_VARIABLE_VALUE_BYTES = 48 * 1024
 MAX_SMS_CHARS = 1200
 
 # Load Config
-CONFIG_PATH = os.path.join(os.path.dirname(__file__), "data", "config.json")
+DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
+CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 try:
     with open(CONFIG_PATH, "r") as f:
         APP_CONFIG = json.load(f)
@@ -1305,8 +1306,9 @@ def fetch_commodity(prefix, cfg, now, access_token):
             five_day_low  = float(h5d['Low'].min())
         h30d = yf_t.history(period='1mo', interval='1d')
         if not h30d.empty:
-            today_date = now.date()
-            prev_daily = h30d[[d.date() < today_date for d in h30d.index.to_pydatetime()]]
+            session_date_str = get_session_date_str(now)
+            session_date = datetime.fromisoformat(session_date_str).date()
+            prev_daily = h30d[[d.date() < session_date for d in h30d.index.to_pydatetime()]]
             if not prev_daily.empty and yesterday_close is None:
                 yesterday_close = float(prev_daily['Close'].iloc[-1])
             thirty_day_avg = float(h30d['Close'].mean())
@@ -1320,7 +1322,7 @@ def fetch_commodity(prefix, cfg, now, access_token):
     if yesterday_close is None:
         try:
             import pandas as pd
-            df = pd.read_csv("data/graves_history.csv")
+            df = pd.read_csv(os.path.join(DATA_DIR, "graves_history.csv"))
             col_name = "nymex_rb" if "RB" in dynamic_yf_symbol else "nymex_ho"
             if not df.empty:
                 yesterday_close = float(df[col_name].iloc[-1])

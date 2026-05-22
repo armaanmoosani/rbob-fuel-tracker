@@ -72,7 +72,15 @@ def extract_price_near_label(text, label):
 def check_inbox_for_prices():
     if not GRAVES_EMAIL or not GRAVES_APP_PASSWORD:
         print("Missing GRAVES_EMAIL or GRAVES_APP_PASSWORD. Cannot check invoices.")
-        return None, None
+        return None, None, False
+        
+    existing_dates = set()
+    if os.path.exists(CSV_PATH):
+        with open(CSV_PATH, "r") as f:
+            for line in f:
+                parts = line.strip().split(',')
+                if parts and parts[0]:
+                    existing_dates.add(parts[0])
         
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
@@ -87,7 +95,7 @@ def check_inbox_for_prices():
         status, messages = mail.search(None, search_query)
         
         if status != "OK" or not messages[0]:
-            return None, None
+            return None, None, False
 
         # Process the most recent email first
         for num in reversed(messages[0].split()):
@@ -121,15 +129,18 @@ def check_inbox_for_prices():
                     import email.utils
                     email_date = email.utils.parsedate_to_datetime(msg.get('Date'))
                     local_date_str = email_date.astimezone(TZ).date().isoformat()
-                    return local_date_str, tuple(prices)
+                    if local_date_str in existing_dates:
+                        print(f"Email date {local_date_str} already in CSV. Skipping.")
+                        return local_date_str, tuple(prices), True
+                    return local_date_str, tuple(prices), False
             except Exception as loop_e:
                 print(f"Skipping badly formatted email {num}: {loop_e}")
                 continue
 
-        return None, None
+        return None, None, False
     except Exception as e:
         print(f"IMAP Error: {e}")
-        return None, None
+        return None, None, False
 
 def read_daily_settlement(target_date_str):
     if not os.path.exists(DS_PATH):
@@ -142,9 +153,18 @@ def read_daily_settlement(target_date_str):
 
 def main():
     print("Starting SMS ingest...")
-    date_str, prices = check_inbox_for_prices()
+    date_str, prices, already_ingested = check_inbox_for_prices()
     
+    if already_ingested:
+        print("Prices already ingested. Exiting silently.")
+        sys.exit(0)
+        
     if not prices:
+        today = datetime.now(TZ)
+        if today.weekday() in (5, 6): # 5 = Saturday, 6 = Sunday
+            print("Today is weekend. Graves Oil is closed. Exiting silently.")
+            sys.exit(0)
+            
         print("No valid SMS reply found.")
         send_alert_email("WARNING: Graves Oil Prices Missing", "No Graves Oil prices received today. Please reply to the SMS with the prices (e.g. 2.10 2.30 2.50).")
         sys.exit(0)

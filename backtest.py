@@ -90,8 +90,8 @@ def find_best_lag_and_window(df):
         df_sliced = df.tail(window) if window else df
         
         for lag in range(0, 5):
-            nymex = df_sliced['nymex_rb'].shift(lag)
-            rack = df_sliced['rack_u']
+            nymex = df_sliced['nymex_rb'].diff().shift(lag)
+            rack = df_sliced['rack_u'].diff()
             
             valid = ~(nymex.isna() | rack.isna())
             if valid.sum() < 20:

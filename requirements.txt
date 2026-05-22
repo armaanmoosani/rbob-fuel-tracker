@@ -4,3 +4,6 @@ pynacl
 matplotlib
 yfinance
 pandas_market_calendars
+pandas
+numpy
+scipy

@@ -36,15 +36,15 @@ def main():
             pred_date = row['timestamp'].split('T')[0]
             # Find pred_date in hist_df
             hist_idx = hist_df.index[hist_df['date'] == pred_date].tolist()
-            if hist_idx and hist_idx[0] + 1 < len(hist_df):
-                next_idx = hist_idx[0] + 1
+            if hist_idx and hist_idx[0] - 1 >= 0:
+                prev_idx = hist_idx[0] - 1
                 curr_row = hist_df.iloc[hist_idx[0]]
-                next_row = hist_df.iloc[next_idx]
+                prev_row = hist_df.iloc[prev_idx]
                 
                 rack_col = 'rack_u' if row['commodity'] == 'RB' else 'rack_d'
                 
-                if pd.notna(curr_row[rack_col]) and pd.notna(next_row[rack_col]):
-                    move = (next_row[rack_col] - curr_row[rack_col]) * 100
+                if pd.notna(curr_row[rack_col]) and pd.notna(prev_row[rack_col]):
+                    move = (curr_row[rack_col] - prev_row[rack_col]) * 100
                     log_df.at[idx, 'actual_next_day_move_cents'] = round(move, 2)
                     updates_made = True
 
@@ -55,11 +55,11 @@ def main():
     # Calculate Metrics
     # Filter to only rows that have been resolved
     df = log_df[log_df['actual_next_day_move_cents'] != 'PENDING'].copy()
+    df['actual_move'] = pd.to_numeric(df['actual_next_day_move_cents'], errors='coerce')
+    df = df.dropna(subset=['actual_move']).copy()
     if len(df) == 0:
         print("No resolved predictions yet.")
         return
-
-    df['actual_move'] = df['actual_next_day_move_cents'].astype(float)
     
     total_alerts = len(df)
     correct_hikes = 0
@@ -133,7 +133,9 @@ def main():
     ax.legend(frameon=True, facecolor='#ffffff', edgecolor='#e2e8f0')
     plt.tight_layout()
     
-    report_date = datetime.now().strftime("%Y-%m-%d")
+    import pytz
+    TZ = pytz.timezone('America/Chicago')
+    report_date = datetime.now(TZ).strftime("%Y-%m-%d")
     chart_filename = f"report_{report_date}.png"
     chart_path = os.path.join(REPORTS_DIR, chart_filename)
     plt.savefig(chart_path)
@@ -231,11 +233,12 @@ def main():
         img.add_header('Content-ID', '<chart_img>')
         msg.attach(img)
         
+    emails = [e.strip() for e in email_to.split(',') if e.strip()]
     try:
         server = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)
         server.starttls()
         server.login(email_user, email_pass)
-        server.sendmail(email_user, email_to, msg.as_string())
+        server.sendmail(email_user, emails, msg.as_string())
         server.quit()
         print("Weekly report email sent.")
     except Exception as e:
