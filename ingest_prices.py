@@ -154,6 +154,9 @@ def main():
         
     git_commit_push(f"Ingest Graves Oil prices for {date_str}")
     print("Successfully ingested.")
+    
+    print("Triggering nightly backtester auto-tune...")
+    subprocess.run(["python", "backtest.py"])
 
 if __name__ == "__main__":
     main()
