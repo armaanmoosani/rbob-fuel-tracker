@@ -82,14 +82,15 @@ def check_inbox_for_prices():
         # Look back 1 day to handle the case where the job runs exactly at midnight
         yesterday = (datetime.now(TZ) - timedelta(days=1)).strftime("%d-%b-%Y")
         
-        # Hyper-specific, non-invasive search query
-        search_query = f'(FROM "donotreply@gravesoil.com" SUBJECT "Latest prices from Graves Oil Company" UNSEEN SINCE "{yesterday}")'
+        # Hyper-specific, non-invasive search query that ignores UNSEEN status so you can read them yourself
+        search_query = f'(FROM "donotreply@gravesoil.com" SUBJECT "Latest prices from Graves Oil Company" SINCE "{yesterday}")'
         status, messages = mail.search(None, search_query)
         
         if status != "OK" or not messages[0]:
             return None, None
 
-        for num in messages[0].split():
+        # Process the most recent email first
+        for num in reversed(messages[0].split()):
             status, data = mail.fetch(num, '(RFC822)')
             msg = email.message_from_bytes(data[0][1])
             body = ""
@@ -116,8 +117,10 @@ def check_inbox_for_prices():
                 prices.append(p)
                 
             if len(prices) == 3:
-                mail.store(num, '+FLAGS', '\\Seen')
-                return datetime.now(TZ).date().isoformat(), tuple(prices)
+                import email.utils
+                email_date = email.utils.parsedate_to_datetime(msg.get('Date'))
+                local_date_str = email_date.astimezone(TZ).date().isoformat()
+                return local_date_str, tuple(prices)
 
         return None, None
     except Exception as e:
