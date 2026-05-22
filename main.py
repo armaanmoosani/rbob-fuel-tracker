@@ -318,6 +318,31 @@ def build_html_block(prefix, info, now):
     else:
         fiveday_section = ''
 
+    sma3 = info_dict.get('sma_3')
+    sma10 = info_dict.get('sma_10')
+    momentum_html = ""
+    if sma3 and sma10:
+        if sma3 > sma10:
+            mom_color = "#22c55e"
+            mom_text = "BULLISH (BUY NOW)"
+            mom_desc = "Short-term momentum is actively pushing prices up."
+        else:
+            mom_color = "#ef4444"
+            mom_text = "BEARISH (WAIT)"
+            mom_desc = "Short-term momentum is actively pushing prices down."
+            
+        momentum_html = f'''
+    <!-- MOMENTUM BAR -->
+    <div style="background:#f8fafc;padding:12px 20px 14px;border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0;border-top:1px solid #e2e8f0;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td><p style="margin:0;font-size:10px;color:#64748b;text-transform:uppercase;font-weight:700;">Momentum Trend</p></td>
+          <td style="text-align:right;"><p style="margin:0;font-size:12px;color:{mom_color};font-weight:700;">{mom_text}</p></td>
+        </tr>
+      </table>
+      <p style="margin:4px 0 0;font-size:9px;color:#94a3b8;font-style:italic;">Based on 3-Day vs 10-Day Moving Average. {mom_desc}</p>
+    </div>'''
+
     html = f"""
     <!-- ══ COMMODITY BLOCK: {COMMODITIES[prefix]['name']} ══ -->
     <div style="background:#ffffff;padding:20px 20px 16px;border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0;border-top:2px solid #94a3b8;">
@@ -395,6 +420,7 @@ def build_html_block(prefix, info, now):
       </div>
     </div>
 
+    {momentum_html}
     <!-- INTRADAY CHART -->
     <div style="background:#ffffff;padding:16px 20px 18px;border-left:1px solid #e2e8f0;border-right:1px solid #e2e8f0;border-top:1px solid #e2e8f0;">
       {intraday_section}
@@ -524,6 +550,15 @@ def send_sms(all_data, now, alert_context):
             
             if info['high_price'] > 0 and info['low_price'] > 0:
                 lines.append(f"H: ${info['high_price']:.4f} | L: ${info['low_price']:.4f}")
+                
+            sma3 = info.get('sma_3')
+            sma10 = info.get('sma_10')
+            if sma3 and sma10:
+                if sma3 > sma10:
+                    lines.append("Mom: Bullish (BUY NOW)")
+                else:
+                    lines.append("Mom: Bearish (WAIT)")
+                    
             lines.append("")
             
     if 'RB' in all_data and 'HO' in all_data and 'CL' in all_data:
@@ -680,7 +715,7 @@ def fetch_commodity(prefix, cfg, now, access_token):
     if not open_price: open_price = current_price
     daily_pct = ((current_price - open_price) / open_price) * 100
     
-    yesterday_close = five_day_high = five_day_low = thirty_day_avg = None
+    yesterday_close = five_day_high = five_day_low = thirty_day_avg = sma_3 = sma_10 = None
     history_5d = []
     try:
         yf_t = yf.Ticker(cfg['yf_symbol'])
@@ -695,6 +730,10 @@ def fetch_commodity(prefix, cfg, now, access_token):
         h30d = yf_t.history(period='1mo', interval='1d')
         if not h30d.empty:
             thirty_day_avg = float(h30d['Close'].mean())
+            if len(h30d) >= 3:
+                sma_3 = float(h30d['Close'].tail(3).mean())
+            if len(h30d) >= 10:
+                sma_10 = float(h30d['Close'].tail(10).mean())
     except Exception:
         pass
 
@@ -717,6 +756,8 @@ def fetch_commodity(prefix, cfg, now, access_token):
         'five_day_high': five_day_high,
         'five_day_low': five_day_low,
         'thirty_day_avg': thirty_day_avg,
+        'sma_3': sma_3,
+        'sma_10': sma_10,
         'chart_intraday_b64': chart_intra,
         'chart_5d_b64': chart_5d
     }
