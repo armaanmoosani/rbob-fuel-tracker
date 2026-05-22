@@ -445,8 +445,10 @@ def build_rack_signal(prefix, data, now):
         log_path = os.path.join(DATA_DIR, "prediction_log.csv")
         file_exists = os.path.exists(log_path)
         
-        session_str = now.date().isoformat()
+        local_now = now.astimezone(TZ)
+        session_str = local_now.date().isoformat()
         already_logged = False
+        
         if file_exists:
             with open(log_path, "r") as f:
                 for line in f:
@@ -464,7 +466,7 @@ def build_rack_signal(prefix, data, now):
                 lag = APP_CONFIG.get("LAG_DAYS", 0)
                 window = APP_CONFIG.get("ROLLING_WINDOW_DAYS", 120)
                 
-                f.write(f"{now.isoformat()},{prefix},{direction},{change_cents:.2f},{lag},{window},{thresh:.2f},PENDING\n")
+                f.write(f"{local_now.isoformat()},{prefix},{direction},{change_cents:.2f},{lag},{window},{thresh:.2f},PENDING\n")
     except Exception as e:
         print(f"Failed to write prediction log: {e}")
 

@@ -141,7 +141,8 @@ def main():
 
     save_config(cfg)
     
-    commit_msg = f"Auto-tune [{pd.Timestamp.now().strftime('%Y-%m-%d')}]: Lag={best_lag}, Win={best_window if best_window else 'ALL'}. RB({msg_rb}) HO({msg_ho})"
+    local_now = pd.Timestamp.now(tz='America/Chicago')
+    commit_msg = f"Auto-tune [{local_now.strftime('%Y-%m-%d')}]: Lag={best_lag}, Win={best_window if best_window else 'ALL'}. RB({msg_rb}) HO({msg_ho})"
     print(commit_msg)
     git_commit_push(commit_msg)
 
