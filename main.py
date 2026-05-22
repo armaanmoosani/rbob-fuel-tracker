@@ -13,6 +13,8 @@ from email.mime.image import MIMEImage
 from datetime import datetime, date, time, timezone, timedelta
 from matplotlib.figure import Figure
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 import pytz
 import yfinance as yf
 import concurrent.futures
@@ -61,8 +63,28 @@ COMMODITIES = {
 REQUEST_TIMEOUT = 20
 MAX_GH_VARIABLE_VALUE_BYTES = 48 * 1024
 MAX_SMS_CHARS = 1200
-RACK_ACTION_THRESHOLD_CENTS = float(os.environ.get('RACK_ACTION_THRESHOLD_CENTS', '1.0'))
-RACK_LEAN_THRESHOLD_CENTS = float(os.environ.get('RACK_LEAN_THRESHOLD_CENTS', '0.5'))
+
+# Load Config
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "data", "config.json")
+try:
+    with open(CONFIG_PATH, "r") as f:
+        APP_CONFIG = json.load(f)
+    print("Loaded config.json custom thresholds.")
+except Exception as e:
+    print(f"Warning: Could not load config.json, using defaults. ({e})")
+    APP_CONFIG = {
+        "MIN_ROWS_FOR_TUNING": 30,
+        "BLEND_ALPHA": 0.3,
+        "RB_HIKE_THRESHOLD_CENTS": 1.0,
+        "RB_DROP_THRESHOLD_CENTS": -1.0,
+        "HO_HIKE_THRESHOLD_CENTS": 1.0,
+        "HO_DROP_THRESHOLD_CENTS": -1.0,
+        "RB_LEAN_HIKE_CENTS": 0.5,
+        "RB_LEAN_DROP_CENTS": -0.5,
+        "HO_LEAN_HIKE_CENTS": 0.5,
+        "HO_LEAN_DROP_CENTS": -0.5,
+        "LAG_DAYS": 0
+    }
 
 def get_session_start(dt):
     import datetime
@@ -207,9 +229,23 @@ def schwab_to_yfinance_symbol(schwab_symbol):
 def contract_state_prefix(prefix, schwab_symbol):
     return f"{prefix}_{schwab_symbol.lstrip('/').upper()}"
 
+def get_github_session():
+    session = requests.Session()
+    retry = Retry(
+        total=5,
+        backoff_factor=1.5,
+        status_forcelist=[403, 429, 500, 502, 503, 504],
+        allowed_methods=["GET", "POST", "PATCH"]
+    )
+    adapter = HTTPAdapter(max_retries=retry)
+    session.mount("https://", adapter)
+    return session
+
+GH_SESSION = get_github_session()
+
 def get_repo_variable(name):
     url = f"https://api.github.com/repos/{GH_REPO}/actions/variables/{name}"
-    res = requests.get(url, headers=GH_HEADERS, timeout=REQUEST_TIMEOUT)
+    res = GH_SESSION.get(url, headers=GH_HEADERS, timeout=REQUEST_TIMEOUT)
     if res.status_code == 404:
         return None
     res.raise_for_status()
@@ -219,9 +255,9 @@ def set_repo_variable(name, value):
     if len(value.encode('utf-8')) > MAX_GH_VARIABLE_VALUE_BYTES:
         raise ValueError(f"GitHub Actions variable {name} exceeds 48 KB")
     url = f"https://api.github.com/repos/{GH_REPO}/actions/variables/{name}"
-    res = requests.patch(url, headers=GH_HEADERS, json={"name": name, "value": value}, timeout=REQUEST_TIMEOUT)
+    res = GH_SESSION.patch(url, headers=GH_HEADERS, json={"name": name, "value": value}, timeout=REQUEST_TIMEOUT)
     if res.status_code == 404:
-        res = requests.post(
+        res = GH_SESSION.post(
             f"https://api.github.com/repos/{GH_REPO}/actions/variables",
             headers=GH_HEADERS,
             json={"name": name, "value": value},
@@ -308,6 +344,8 @@ def save_settlement_snapshots(all_data, now):
     if not (now.hour == 13 and 30 <= now.minute <= 45):
         return
     session_str = get_session_date_str(now)
+    
+    # Legacy logic (optional, keep for safety)
     for prefix in ['RB', 'HO']:
         data = all_data.get(prefix)
         if not data:
@@ -325,6 +363,31 @@ def save_settlement_snapshots(all_data, now):
             print(f"[{prefix}] Saved settlement-window snapshot: ${snapshot['price']:.4f}")
         except Exception as e:
             print(f"[{prefix}] Warning: could not save settlement snapshot: {e}")
+
+    # NEW LOGIC: Save daily_settlement.json locally for ingestion
+    ds_path = os.path.join(os.path.dirname(__file__), "data", "daily_settlement.json")
+    try:
+        if os.path.exists(ds_path):
+            with open(ds_path, "r") as f:
+                ds = json.load(f)
+            if ds.get("date") == session_str:
+                return # Already saved today
+                
+        ds = {
+            "date": session_str,
+            "captured_at": now.isoformat()
+        }
+        if 'RB' in all_data:
+            ds["rbob_settlement"] = round(all_data['RB']['current_price'], 4)
+        if 'HO' in all_data:
+            ds["heating_oil_settlement"] = round(all_data['HO']['current_price'], 4)
+            
+        os.makedirs(os.path.dirname(ds_path), exist_ok=True)
+        with open(ds_path, "w") as f:
+            json.dump(ds, f, indent=2)
+        print(f"Saved local data/daily_settlement.json")
+    except Exception as e:
+        print(f"Warning: could not save daily_settlement.json: {e}")
 
 def build_rack_signal(prefix, data, now):
     yest = data.get('yesterday_close')
@@ -345,22 +408,28 @@ def build_rack_signal(prefix, data, now):
     change_cents = (signal_price - yest) * 100
     name = COMMODITIES[prefix]['name']
 
-    if change_cents >= RACK_ACTION_THRESHOLD_CENTS:
+    # Load dynamic thresholds from config
+    hike_thresh = APP_CONFIG.get(f"{prefix}_HIKE_THRESHOLD_CENTS", 1.0)
+    drop_thresh = APP_CONFIG.get(f"{prefix}_DROP_THRESHOLD_CENTS", -1.0)
+    lean_hike = APP_CONFIG.get(f"{prefix}_LEAN_HIKE_CENTS", 0.5)
+    lean_drop = APP_CONFIG.get(f"{prefix}_LEAN_DROP_CENTS", -0.5)
+
+    if change_cents >= hike_thresh:
         action = "BUY_NOW"
         label = "Hike likely"
         color = "#ef4444"
         instruction = "Dispatch before the rack deadline if you need inventory."
-    elif change_cents <= -RACK_ACTION_THRESHOLD_CENTS:
+    elif change_cents <= drop_thresh:
         action = "WAIT"
         label = "Drop likely"
         color = "#22c55e"
         instruction = "Wait if you can safely defer inventory."
-    elif change_cents >= RACK_LEAN_THRESHOLD_CENTS:
+    elif change_cents >= lean_hike:
         action = "LEAN_BUY"
         label = "Lean hike"
         color = "#f97316"
         instruction = "Small edge only; buy only if inventory risk already favors lifting."
-    elif change_cents <= -RACK_LEAN_THRESHOLD_CENTS:
+    elif change_cents <= lean_drop:
         action = "LEAN_WAIT"
         label = "Lean drop"
         color = "#38bdf8"
@@ -379,7 +448,7 @@ def build_rack_signal(prefix, data, now):
         "change_cents": change_cents,
         "basis": basis,
         "signal_price": signal_price,
-        "threshold_cents": RACK_ACTION_THRESHOLD_CENTS
+        "threshold_cents": hike_thresh
     }
 
 def attach_rack_signals(all_data, now):
@@ -1061,7 +1130,8 @@ def fetch_commodity(prefix, cfg, now, access_token):
     
     yesterday_close = five_day_high = five_day_low = thirty_day_avg = sma_3 = sma_10 = None
     if data_source == 'schwab' and schwab_close > 0:
-        yesterday_close = schwab_close
+        if APP_CONFIG.get("LAG_DAYS", 0) == 0:
+            yesterday_close = schwab_close
         
     history_5d = []
     try:
@@ -1073,7 +1143,12 @@ def fetch_commodity(prefix, cfg, now, access_token):
             five_day_low  = float(h5d['Low'].min())
             today_date = now.date()
             prev = h5d[[d.date() < today_date for d in h5d.index.to_pydatetime()]]
-            if not prev.empty and yesterday_close is None: yesterday_close = float(prev['Close'].iloc[-1])
+            if not prev.empty and yesterday_close is None:
+                lag_days = APP_CONFIG.get("LAG_DAYS", 0)
+                if len(prev) > lag_days:
+                    yesterday_close = float(prev['Close'].iloc[-(1 + lag_days)])
+                else:
+                    yesterday_close = float(prev['Close'].iloc[0])
         h30d = yf_t.history(period='1mo', interval='1d')
         if not h30d.empty:
             thirty_day_avg = float(h30d['Close'].mean())
