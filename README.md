@@ -14,8 +14,7 @@ An autonomous, serverless market tracker designed for independent gas stations a
   - **Macro Supply Indicator (Crack Spread)**: Calculates the 3:2:1 NYMEX Crack Spread using background Crude Oil (`/CL`) data to predict terminal shortages or oversupply.
   - **Short-Term Momentum**: Tracks the 3-Day vs 10-Day Moving Average crossover to identify active upward/downward pricing trends.
   - **Volatility Swings:** Triggers immediate alerts if the price swings > 1.5% from the last baseline.
-  - **5:30 PM CT Rack Window:** Timed perfectly for evening OPIS/Terminal price releases.
-  - **1:30 PM CT Settlement:** Reports the official CME daily settlement price.
+  - **4:00 PM Final Verdict:** Compares the 1:30 PM official settlement to yesterday's settlement to accurately predict the direction of the upcoming 6:00 PM branded rack price update, allowing dealers to time their truck dispatches to capture the best price.
 
 ## Email Layout
 
