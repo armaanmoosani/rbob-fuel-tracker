@@ -563,21 +563,20 @@ def send_sms(all_data, now, alert_context):
     lines.append("")
     
     if alert_context.get('label') == 'Final Verdict':
-        lines.append("=== FINAL VERDICT ===")
+        lines.append("FINAL VERDICT:")
         rb = all_data.get('RB')
         ho = all_data.get('HO')
         
         if rb and rb['yesterday_close']:
             chg = rb['current_price'] - rb['yesterday_close']
-            if chg > 0: lines.append("GAS: HIKE (Buy Now)")
-            else: lines.append("GAS: DROP (Wait)")
+            if chg > 0: lines.append("Gas: HIKE (Buy Now)")
+            else: lines.append("Gas: DROP (Wait)")
             
         if ho and ho['yesterday_close']:
             chg = ho['current_price'] - ho['yesterday_close']
-            if chg > 0: lines.append("DIESEL: HIKE (Buy Now)")
-            else: lines.append("DIESEL: DROP (Wait)")
+            if chg > 0: lines.append("Diesel: HIKE (Buy Now)")
+            else: lines.append("Diesel: DROP (Wait)")
             
-        lines.append("=====================")
         lines.append("")
     
     for prefix in ['RB', 'HO']:
