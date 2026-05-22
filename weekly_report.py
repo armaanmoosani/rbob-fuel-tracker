@@ -159,9 +159,9 @@ def main():
     <body style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f8fafc; margin: 0; padding: 20px;">
         <div style="max-width: 600px; margin: 0 auto; background-color: #ffffff; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);">
             <!-- Header -->
-            <div style="background-color: #1e293b; padding: 24px; text-align: center;">
-                <h1 style="margin: 0; color: #ffffff; font-size: 24px; font-weight: 600;">Weekly Performance Report</h1>
-                <p style="margin: 8px 0 0 0; color: #94a3b8; font-size: 14px;">Graves Oil Predictive Engine</p>
+            <div style="background-color: #f8fafc; padding: 24px; text-align: center; border-bottom: 1px solid #e2e8f0;">
+                <h1 style="margin: 0; color: #0f172a; font-size: 24px; font-weight: 600;">Weekly Performance Report</h1>
+                <p style="margin: 8px 0 0 0; color: #64748b; font-size: 14px;">Graves Oil Predictive Engine</p>
             </div>
             
             <div style="padding: 32px 24px;">

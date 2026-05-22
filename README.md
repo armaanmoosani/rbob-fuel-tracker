@@ -1,60 +1,40 @@
-# RBOB & HO Fuel Tracker
+# Graves Oil Pricing Risk Engine
 
-An autonomous, serverless market tracker designed for independent gas stations and fuel buyers. This system continuously monitors CME RBOB Wholesale Gasoline futures (`/RB`) and NYMEX ULSD Diesel futures (`/HO`), and generates professional, chart-rich email and SMS alerts exactly when fuel procurement decisions need to be made.
+An institutional-grade, fully automated fuel purchasing predictor built specifically for independent gas stations and bulk fuel buyers. 
 
-## Features
+This system acts as a headless, serverless data pipeline and machine learning engine. It mathematically correlates the physical supplier rack prices (Graves Oil Company) with the NYMEX commodity futures market to predict whether wholesale gasoline and diesel prices will rise or fall tomorrow.
 
-- **Serverless Architecture**: Runs entirely on GitHub Actions via a 5-minute cron schedule. No servers to maintain.
-- **Market Calendar Awareness**: Automatically halts execution during CME Globex weekends and holidays to conserve API limits.
-- **Charles Schwab API Integration**: Pulls live `/RB` (Gasoline) and `/HO` (Diesel) futures data.
-- **Robust Fallback**: Automatically falls back to Yahoo Finance (`RB=F` and `HO=F`) if the primary broker API experiences downtime.
-- **Self-Healing OAuth**: Handles 7-day token expirations by automatically requesting new refresh tokens and securely rotating them back into GitHub Secrets using PyNaCl.
-- **Accurate CME Session Tracking**: Correctly calculates "Intraday" charts across midnight boundaries by respecting the true 5:00 PM CT to 4:00 PM CT CME trading session.
-- **Market Intelligence Alerts**: 
-  - **Macro Supply Indicator (Crack Spread)**: Calculates the 3:2:1 NYMEX Crack Spread using background Crude Oil (`/CL`) data to predict terminal shortages or oversupply.
-  - **Short-Term Momentum**: Tracks the 3-Day vs 10-Day Moving Average crossover to identify active upward/downward pricing trends.
-  - **Volatility Swings:** Triggers immediate alerts if the price swings > 1.5% from the last baseline.
-  - **2:00 PM Final Verdict:** Compares the 1:30 PM official settlement to yesterday's settlement to accurately predict the direction of the upcoming 6:00 PM branded rack price update, allowing dealers to time their truck dispatches to capture the best price.
+## Core Features
 
-## Email Layout
+- **Automated Price Ingestion (`ingest_prices.py`)**: Nightly connects via IMAP to read the official supplier invoice. It parses the true `Date` header, extracts the exact cents-per-gallon price for E10 Unleaded, E10 Premium, and Clear Diesel, and appends it to an immutable CSV history.
+- **Dynamic Regime Detection (`backtest.py`)**: Runs every night to backtest the historical relationship between NYMEX futures and Graves Oil. It dynamically selects the optimal `LAG_DAYS` (0 vs 1) and optimal `ROLLING_WINDOW_DAYS` (e.g., 90, 120, 180) to maximize out-of-sample $R^2$, mathematically protecting you against quiet supplier formula changes.
+- **Asymmetric Thresholds**: Uses SciPy linear regression to calculate the exact 15th-percentile NYMEX move required to force the supplier to hike prices, isolating true signal from market noise.
+- **Real-Time SMS Alerts (`main.py`)**: Polls the Yahoo Finance API (`RB=F`, `HO=F`, `CL=F`) every 5 minutes. Tracks the 3:2:1 Crack Spread. At 2:35 PM CT (post-NYMEX settlement), it texts the dispatcher a clear "EXPECT HIKE", "EXPECT DROP", or "NO EDGE" verdict.
+- **Immutable Audit Log**: Every prediction is permanently written to `prediction_log.csv` milliseconds before the SMS fires, guaranteeing an unalterable history of the bot's decisions.
+- **Weekly Performance Dashboard (`weekly_report.py`)**: Automatically backfills prediction outcomes by comparing them to the next trading day's physical rack price. Every Saturday morning, it emails a premium HTML dashboard containing a Confusion Matrix and a Matplotlib chart plotting Cumulative Savings in ¢/gal.
 
-The email reports are generated with pure Python (`matplotlib` + `email.mime`) and are formatted as responsive, dark-themed HTML specifically tailored for quick decision-making:
-- **Intraday & 5-Day Trend Charts** (embedded inline)
-- **Position in Today's Range** (visual progress bar)
-- **Contextual Stats** (Yesterday Close, 30-Day Avg %, 5-Day High/Low)
+## System Architecture
 
----
+1. **GitHub Actions Cron Jobs**: 
+    - Real-Time Tracker runs every 5 minutes during CME trading hours.
+    - Nightly Ingestion runs at 11:45 PM CT to ingest Graves Oil invoices.
+    - Nightly Backtest auto-tunes the ML model parameters at 11:55 PM CT.
+    - Weekly Dashboard runs at 3:00 AM CT on Saturdays.
+2. **Data Storage**: `data/graves_history.csv` and `data/prediction_log.csv` act as lightweight, headless databases synced directly to the `main` git branch. 
+3. **No Database/Servers**: 100% serverless execution.
 
-## Setup & Deployment
+## Setup Instructions
 
-To run this in your own GitHub account:
+To deploy this securely to your own private repository:
 
 1. **Fork the Repository**
-2. **Create a GitHub Personal Access Token (PAT)** with repository write permissions (needed to save price history state and rotate OAuth tokens).
-3. **Configure GitHub Secrets**:
-   Go to your repository **Settings > Secrets and variables > Actions** and add the following repository secrets:
-   - `GH_PAT`: Your GitHub Personal Access Token
-   - `GH_REPO`: Your repository path (e.g., `username/rbob-ho-fuel-tracker`)
-   - `GMAIL_USER`: The sending Gmail address
-   - `GMAIL_APP_PASSWORD`: Google App Password (not your standard login password)
-   - `TO_EMAIL`: The destination email address for the alerts
-   - `SCHWAB_APP_KEY`: Your Schwab Developer App Key
-   - `SCHWAB_APP_SECRET`: Your Schwab Developer App Secret
-   - `SCHWAB_REFRESH_TOKEN`: Your initial Schwab OAuth Refresh Token (use `handshake.py` to generate this locally first)
-
-4. **Enable GitHub Actions**:
-   Go to the Actions tab and enable workflows. The tracker will now run every 5 minutes during the trading week.
-
-## Local Testing
-
-You can generate a local preview of the email template without needing any API keys. The preview generator pulls delayed public data from Yahoo Finance and outputs an HTML file you can open in your browser.
-
-```bash
-pip install -r requirements.txt
-python generate_preview.py
-# Then open email_preview.html in any web browser
-```
+2. **Configure GitHub Secrets**: Go to **Settings > Secrets and variables > Actions** and add:
+   - `GRAVES_EMAIL`: Your corporate Gmail address receiving the Graves invoices.
+   - `GRAVES_APP_PASSWORD`: The 16-character Google App Password for that account.
+   - `GMAIL_USER`: The email address the bot uses to send the SMS text emails.
+   - `GMAIL_APP_PASSWORD`: The Google App Password for the sending account.
+   - `TO_EMAIL`: The destination SMS gateway (e.g., `1234567890@vtext.com` for Verizon).
 
 ## Disclaimer
 
-This software is for informational purposes only. It does not constitute financial advice. The maintainers are not responsible for fuel purchasing decisions or financial losses resulting from the use of this tool.
+This software is a decision-support tool built for informational purposes only. It does not constitute financial advice. The maintainers are not responsible for fuel purchasing decisions, inventory stockouts, or financial losses resulting from the use of this tool.
