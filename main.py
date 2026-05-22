@@ -1313,16 +1313,16 @@ def fetch_commodity(prefix, cfg, now, access_token):
             history_5d = [{"t": idx.astimezone(TZ).isoformat(), "p": round(float(row['Close']), 4)} for idx, row in h5d.iterrows()]
             five_day_high = float(h5d['High'].max())
             five_day_low  = float(h5d['Low'].min())
-            today_date = now.date()
-            prev = h5d[[d.date() < today_date for d in h5d.index.to_pydatetime()]]
-            if not prev.empty and yesterday_close is None:
-                lag_days = APP_CONFIG.get("LAG_DAYS", 0)
-                if len(prev) > lag_days:
-                    yesterday_close = float(prev['Close'].iloc[-(1 + lag_days)])
-                else:
-                    yesterday_close = float(prev['Close'].iloc[0])
         h30d = yf_t.history(period='1mo', interval='1d')
         if not h30d.empty:
+            today_date = now.date()
+            prev_daily = h30d[[d.date() < today_date for d in h30d.index.to_pydatetime()]]
+            if not prev_daily.empty and yesterday_close is None:
+                lag_days = max(1, APP_CONFIG.get("LAG_DAYS", 1))
+                if len(prev_daily) >= lag_days:
+                    yesterday_close = float(prev_daily['Close'].iloc[-lag_days])
+                else:
+                    yesterday_close = float(prev_daily['Close'].iloc[0])
             thirty_day_avg = float(h30d['Close'].mean())
             if len(h30d) >= 3:
                 sma_3 = float(h30d['Close'].tail(3).mean())
