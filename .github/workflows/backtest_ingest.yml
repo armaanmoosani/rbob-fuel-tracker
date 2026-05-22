@@ -2,7 +2,7 @@ name: Daily Price Ingestion
 
 on:
   schedule:
-    - cron: '0 2 * * *' # Runs at 2:00 AM UTC (8:00 PM CT / 9:00 PM CT)
+    - cron: '45 4 * * *' # Runs at 4:45 AM UTC (11:45 PM CT)
   workflow_dispatch:
 
 jobs:
@@ -30,5 +30,7 @@ jobs:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          GRAVES_EMAIL: ${{ secrets.GRAVES_EMAIL }}
+          GRAVES_APP_PASSWORD: ${{ secrets.GRAVES_APP_PASSWORD }}
         run: |
           python ingest_prices.py

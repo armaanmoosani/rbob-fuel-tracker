@@ -1012,43 +1012,6 @@ def send_once_today(key, subject, all_data, now, alert_context):
     except Exception as e:
         print(f"Warning: could not save lock {db_key}: {e}")
 
-def send_daily_prompt(now):
-    # Only run at 7:30 PM CT (19:30) on weekdays
-    if now.weekday() > 4 or not (now.hour == 19 and now.minute >= 30):
-        return
-
-    session_str = get_session_date_str(now)
-    db_key = "SENT_DAILY_PROMPT"
-    
-    # Use repo variable checkpoint to ensure it only sends once
-    last_sent = get_repo_variable(db_key)
-    if last_sent == session_str:
-        return
-        
-    print("Time is 19:30 CT. Sending daily SMS price prompt...")
-    body = "Please reply with today's Graves Oil prices.\nFormat: Unleaded Premium Diesel\n(e.g. 2.10 2.30 2.50)"
-    
-    try:
-        sms_msg = MIMEText(body)
-        sms_msg['Subject'] = 'Graves Oil Prices Needed'
-        sms_msg['From'] = GMAIL_USER
-        
-        srv = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)
-        srv.starttls()
-        srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-        
-        phones = [p.strip() for p in TO_PHONE_SMS.split(',')]
-        for phone in phones:
-            sms_msg['To'] = phone
-            srv.sendmail(GMAIL_USER, phone, sms_msg.as_string())
-            print(f"Daily prompt sent to {phone}")
-            
-        srv.quit()
-        
-        # Checkpoint successful send
-        set_repo_variable(db_key, session_str)
-    except Exception as e:
-        print(f"Failed to send daily prompt: {e}")
 
 def main():
     start_time = datetime.now(timezone.utc)
@@ -1170,8 +1133,6 @@ def main():
             'action': 'Periodic fuel market snapshot.',
             'action_color': '#475569'
         })
-        
-    send_daily_prompt(now)
 
     print(f"Total time: {(datetime.now(timezone.utc) - start_time).total_seconds():.1f}s")
 

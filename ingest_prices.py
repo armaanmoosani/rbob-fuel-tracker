@@ -9,10 +9,13 @@ import subprocess
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 import pytz
+from bs4 import BeautifulSoup
 
 GMAIL_USER = os.environ.get('GMAIL_USER')
 GMAIL_APP_PASSWORD = os.environ.get('GMAIL_APP_PASSWORD')
 TO_EMAIL = os.environ.get('TO_EMAIL')
+GRAVES_EMAIL = os.environ.get('GRAVES_EMAIL')
+GRAVES_APP_PASSWORD = os.environ.get('GRAVES_APP_PASSWORD')
 TZ = pytz.timezone('America/Chicago')
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -53,21 +56,35 @@ def git_commit_push(message):
         print(f"Git commit/push failed: {e}")
         sys.exit(1)
 
-def extract_prices(text):
-    # Match 3 decimals separated by space, comma, slash
-    matches = re.findall(r'\b([1-6]\.\d{2,4})\b', text)
-    if len(matches) == 3:
-        return [float(m) for m in matches]
+LABELS = {
+    "rack_u": "E10 - UNLEADED",
+    "rack_p": "E10 - PREMIUM",
+    "rack_d": "CLEAR DIESEL",
+}
+
+def extract_price_near_label(text, label):
+    pattern = rf'{re.escape(label)}.*?\$?(\d+\.\d{{2,5}})'
+    match = re.search(pattern, text, re.IGNORECASE)
+    if match:
+        return float(match.group(1))
     return None
 
 def check_inbox_for_prices():
+    if not GRAVES_EMAIL or not GRAVES_APP_PASSWORD:
+        print("Missing GRAVES_EMAIL or GRAVES_APP_PASSWORD. Cannot check invoices.")
+        return None, None
+        
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-        mail.select("inbox")
+        mail.login(GRAVES_EMAIL, GRAVES_APP_PASSWORD)
+        mail.select('"[Gmail]/All Mail"')
         
-        today = datetime.now(TZ).strftime("%d-%b-%Y")
-        status, messages = mail.search(None, f'(UNSEEN SINCE "{today}")')
+        # Look back 1 day to handle the case where the job runs exactly at midnight
+        yesterday = (datetime.now(TZ) - timedelta(days=1)).strftime("%d-%b-%Y")
+        
+        # Hyper-specific, non-invasive search query
+        search_query = f'(FROM "donotreply@gravesoil.com" SUBJECT "Latest prices from Graves Oil Company" UNSEEN SINCE "{yesterday}")'
+        status, messages = mail.search(None, search_query)
         
         if status != "OK" or not messages[0]:
             return None, None
@@ -76,29 +93,29 @@ def check_inbox_for_prices():
             status, data = mail.fetch(num, '(RFC822)')
             msg = email.message_from_bytes(data[0][1])
             body = ""
+            
             if msg.is_multipart():
                 for part in msg.walk():
-                    if part.get_content_type() == "text/plain":
-                        body += part.get_payload(decode=True).decode(errors='ignore')
+                    ctype = part.get_content_type()
+                    cdispo = str(part.get('Content-Disposition'))
+                    if ctype == 'text/plain' and 'attachment' not in cdispo:
+                        body += part.get_payload(decode=True).decode('utf-8', errors='ignore') + "\n"
+                    elif ctype == 'text/html' and 'attachment' not in cdispo:
+                        html = part.get_payload(decode=True).decode('utf-8', errors='ignore')
+                        body += BeautifulSoup(html, "html.parser").get_text(separator=" ") + "\n"
             else:
-                body = msg.get_payload(decode=True).decode(errors='ignore')
+                payload = msg.get_payload(decode=True)
+                if payload:
+                    body = payload.decode('utf-8', errors='ignore')
 
-            # Check backfill
-            backfill_match = re.search(r'BACKFILL\s+(\d{4}-\d{2}-\d{2})\s+([1-6]\.\d+)[,\s/]+([1-6]\.\d+)[,\s/]+([1-6]\.\d+)', body, re.IGNORECASE)
-            if backfill_match:
-                bf_date_str = backfill_match.group(1)
-                bf_date = datetime.strptime(bf_date_str, "%Y-%m-%d").date()
-                today_date = datetime.now(TZ).date()
-                if (today_date - bf_date).days > 7:
-                    send_alert_email("Fuel Tracker Error: Backfill Rejected", f"Backfill date {bf_date_str} is > 7 days old. Rejected to prevent data corruption.")
-                    continue
-                u, p, d = map(float, backfill_match.group(2, 3, 4))
-                if all(1.50 <= x <= 6.00 for x in (u, p, d)):
-                    mail.store(num, '+FLAGS', '\\Seen')
-                    return bf_date_str, (u, p, d)
-
-            prices = extract_prices(body)
-            if prices and all(1.50 <= x <= 6.00 for x in prices):
+            prices = []
+            for key, label in LABELS.items():
+                p = extract_price_near_label(body, label)
+                if p is None or not (1.50 <= p <= 6.00):
+                    break
+                prices.append(p)
+                
+            if len(prices) == 3:
                 mail.store(num, '+FLAGS', '\\Seen')
                 return datetime.now(TZ).date().isoformat(), tuple(prices)
 
