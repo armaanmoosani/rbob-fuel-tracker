@@ -705,7 +705,8 @@ def is_market_open(dt):
 
 def fetch_commodity(prefix, cfg, now, access_token):
     schwab_symbol = get_front_month_schwab_symbol(now, prefix)
-    print(f"[{prefix}] Targeting front-month: Schwab {schwab_symbol} | yf {cfg['yf_symbol']}")
+    dynamic_yf_symbol = schwab_symbol.replace('/', '') + '.NYM'
+    print(f"[{prefix}] Targeting front-month: Schwab {schwab_symbol} | yf {dynamic_yf_symbol}")
     
     current_price = open_price = high_price = low_price = None
     data_source = None
@@ -766,7 +767,7 @@ def fetch_commodity(prefix, cfg, now, access_token):
         
     history_5d = []
     try:
-        yf_t = yf.Ticker(cfg['yf_symbol'])
+        yf_t = yf.Ticker(dynamic_yf_symbol)
         h5d = yf_t.history(period='5d', interval='1h')
         if not h5d.empty:
             history_5d = [{"t": idx.astimezone(TZ).isoformat(), "p": round(float(row['Close']), 4)} for idx, row in h5d.iterrows()]
