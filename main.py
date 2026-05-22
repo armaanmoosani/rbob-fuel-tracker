@@ -496,7 +496,7 @@ def build_html_email(subject, all_data, now, alert_context):
                 crack_chg = crack - yest_crack
                 sign = '+' if crack_chg >= 0 else ''
                 trend_color = '#22c55e' if crack_chg >= 0 else '#ef4444'
-                trend_text = "Widening (Oversupply Expected -> Consider Waiting)" if crack_chg >= 0 else "Shrinking (Shortage Expected -> Consider Buying)"
+                trend_text = "Widening (Gasoline rallying -> Consider BUY)" if crack_chg >= 0 else "Shrinking (Gasoline dropping -> Consider WAIT)"
                 trend_str = f'<span style="color:{trend_color};font-weight:700;">{sign}${crack_chg:.2f} / bbl</span> &nbsp;&middot;&nbsp; <span>{trend_text}</span>'
             
             crack_spread_html = f'''
@@ -505,7 +505,7 @@ def build_html_email(subject, all_data, now, alert_context):
               <p style="margin:0 0 4px;font-size:10px;color:#6366f1;text-transform:uppercase;letter-spacing:0.1em;font-weight:700;">Market Intelligence</p>
               <p style="margin:0 0 6px;font-size:16px;color:#0f172a;font-weight:700;">3:2:1 Crack Spread: {crack_str}</p>
               <p style="margin:0 0 8px;font-size:12px;color:#475569;">{trend_str}</p>
-              <p style="margin:0;font-size:11px;color:#64748b;line-height:1.5;"><strong>Cheat Sheet:</strong> The profit margin refineries make. When it widens, refineries overproduce (creating rack price drops). When it shrinks, they cut production (creating shortages and price spikes).</p>
+              <p style="margin:0;font-size:11px;color:#64748b;line-height:1.5;"><strong>Cheat Sheet:</strong> When the spread widens, it means gasoline is surging faster than crude oil, indicating strong demand. Rack prices will likely jump tonight (BUY). When it shrinks, gasoline prices are lagging, indicating weak demand (WAIT).</p>
             </div>
             '''
 
@@ -619,7 +619,7 @@ def send_sms(all_data, now, alert_context):
                 yest_crack = (rb['yesterday_close'] * 28) + (ho['yesterday_close'] * 14) - cl['yesterday_close']
                 crack_chg = crack - yest_crack
                 sign = '+' if crack_chg >= 0 else ''
-                trend = "Widening (Supply rising -> Consider Wait)" if crack_chg >= 0 else "Shrinking (Supply falling -> Consider Buy)"
+                trend = "Widening (Gasoline rallying -> Consider BUY)" if crack_chg >= 0 else "Shrinking (Gasoline dropping -> Consider WAIT)"
                 lines[-1] = f"CRACK SPREAD: ${crack:.2f} ({sign}${crack_chg:.2f})"
                 lines.append(f"Trend: {trend}")
             lines.append("")
