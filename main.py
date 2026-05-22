@@ -169,7 +169,7 @@ def append_price(history, ts, price):
     filtered.append({"t": ts.isoformat(), "p": round(price, 4)})
     return filtered
 
-def generate_intraday_chart(history, current_price, open_price, high_price, low_price, daily_pct, commodity_name):
+def generate_intraday_chart(history, current_price, baseline_price, high_price, low_price, daily_pct, commodity_name):
     if len(history) < 3:
         return None
     times  = [datetime.fromisoformat(h['t']).astimezone(TZ) for h in history]
@@ -189,13 +189,13 @@ def generate_intraday_chart(history, current_price, open_price, high_price, low_
     if high_price > 0 and low_price > 0:
         ax.axhspan(low_price, high_price, alpha=0.04, color='#94a3b8', zorder=1)
 
-    if open_price:
-        ax.axhline(open_price, color='#94a3b8', linestyle='--', linewidth=1, zorder=2)
-        ax.annotate(f' Open: ${open_price:.4f}', xy=(times[0], open_price),
+    if baseline_price:
+        ax.axhline(baseline_price, color='#94a3b8', linestyle='--', linewidth=1, zorder=2)
+        ax.annotate(f' Yest. Close: ${baseline_price:.4f}', xy=(times[0], baseline_price),
                     color='#94a3b8', fontsize=14, va='bottom', ha='left')
 
     ax.plot(times, prices, color=line_color, linewidth=2.5, zorder=4)
-    ax.fill_between(times, min(prices) if min(prices) < open_price else open_price, prices,
+    ax.fill_between(times, min(prices) if min(prices) < baseline_price else baseline_price, prices,
                     alpha=0.10, color=line_color, zorder=2)
     ax.scatter([times[-1]], [prices[-1]], color='#22c55e', s=60, zorder=5, linewidths=0)
     ax.annotate(f'  ${current_price:.4f}', xy=(times[-1], prices[-1]),
@@ -795,7 +795,7 @@ def fetch_commodity(prefix, cfg, now, access_token):
     history_intra = append_price(history_intra, now, current_price)
     save_price_history(history_intra, prefix)
     
-    chart_intra = generate_intraday_chart(history_intra, current_price, open_price, high_price, low_price, daily_pct, cfg['name'])
+    chart_intra = generate_intraday_chart(history_intra, current_price, baseline_price, high_price, low_price, daily_pct, cfg['name'])
     chart_5d = generate_5day_chart(history_5d, current_price)
     
     print(f"[{prefix}] Fetched: ${current_price:.4f} ({daily_pct:+.2f}%)")
