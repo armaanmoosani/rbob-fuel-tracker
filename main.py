@@ -209,7 +209,7 @@ def generate_intraday_chart(history, current_price, open_price, high_price, low_
 
     pct_sign = '+' if is_up else ''
     ax.set_title(
-        f'{commodity_name} Intraday   {pct_sign}{daily_pct:.2f}% vs open   '
+        f'{commodity_name} Intraday   {pct_sign}{daily_pct:.2f}% vs close   '
         f'as of {times[-1].strftime("%-I:%M %p CT")}',
         color='#e2e8f0', fontsize=20, fontweight='bold', pad=12
     )
@@ -286,7 +286,9 @@ def build_html_block(prefix, info, now):
     pct_bg     = '#0a2010' if is_up else '#200a0a'
     arrow      = '\u25b2' if is_up else '\u25bc'
     pct_sign   = '+' if is_up else ''
-    dollar_chg = current_price - open_price
+    
+    baseline_price = yesterday_close if yesterday_close else open_price
+    dollar_chg = current_price - baseline_price
 
     price_range  = (high_price - low_price) if (high_price > 0 and low_price > 0) else 0
     range_pct    = ((current_price - low_price) / price_range * 100) if price_range > 0 else 50.0
@@ -354,7 +356,7 @@ def build_html_block(prefix, info, now):
       <div style="display:inline-block;margin-top:9px;padding:4px 13px;background:{pct_bg};border-radius:20px;border:1px solid {pct_color}33;">
         <span style="font-size:14px;font-weight:700;color:{pct_color};">{arrow}&nbsp;{pct_sign}{daily_pct:.2f}%</span>
         <span style="font-size:12px;color:{pct_color};opacity:0.8;">&nbsp;({pct_sign}${dollar_chg:.4f})</span>
-        <span style="font-size:10px;color:#64748b;">&nbsp;vs open</span>
+        <span style="font-size:10px;color:#64748b;">&nbsp;vs close</span>
       </div>
     </div>
 
@@ -586,7 +588,8 @@ def send_sms(all_data, now, alert_context):
             pct_sign  = '+' if info['daily_pct'] >= 0 else ''
             
             lines.append(f"{cname}")
-            dollar_chg = info['current_price'] - info['open_price']
+            baseline_price = info.get('yesterday_close') or info['open_price']
+            dollar_chg = info['current_price'] - baseline_price
             lines.append(f"Now: ${info['current_price']:.4f} ({pct_sign}{info['daily_pct']:.2f}% | {pct_sign}${abs(dollar_chg):.4f})")
             
             if info['high_price'] > 0 and info['low_price'] > 0:
@@ -754,7 +757,6 @@ def fetch_commodity(prefix, cfg, now, access_token):
         return None
         
     if not open_price: open_price = current_price
-    daily_pct = ((current_price - open_price) / open_price) * 100
     
     yesterday_close = five_day_high = five_day_low = thirty_day_avg = sma_3 = sma_10 = None
     history_5d = []
@@ -777,6 +779,9 @@ def fetch_commodity(prefix, cfg, now, access_token):
                 sma_10 = float(h30d['Close'].tail(10).mean())
     except Exception:
         pass
+
+    baseline_price = yesterday_close if yesterday_close else open_price
+    daily_pct = ((current_price - baseline_price) / baseline_price) * 100
 
     history_intra = load_price_history(prefix)
     history_intra = append_price(history_intra, now, current_price)
@@ -862,7 +867,8 @@ if __name__ == "__main__":
                 pass
                 
         curr = all_data[prefix]['current_price']
-        ref = last_alert_price if last_alert_price else all_data[prefix]['open_price']
+        baseline = all_data[prefix].get('yesterday_close') or all_data[prefix]['open_price']
+        ref = last_alert_price if last_alert_price else baseline
         swing = ((curr - ref) / ref * 100) if ref else 0.0
         
         if abs(swing) >= 1.5:
