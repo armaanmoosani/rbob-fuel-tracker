@@ -324,11 +324,11 @@ def build_html_block(prefix, info, now):
     if sma3 and sma10:
         if sma3 > sma10:
             mom_color = "#22c55e"
-            mom_text = "BULLISH (UPWARD TREND)"
+            mom_text = "BULLISH (Consider Buying)"
             mom_desc = "Short-term momentum is actively pushing prices up."
         else:
             mom_color = "#ef4444"
-            mom_text = "BEARISH (DOWNWARD TREND)"
+            mom_text = "BEARISH (Consider Waiting)"
             mom_desc = "Short-term momentum is actively pushing prices down."
             
         momentum_html = f'''
@@ -468,7 +468,7 @@ def build_html_email(subject, all_data, now, alert_context):
                 crack_chg = crack - yest_crack
                 sign = '+' if crack_chg >= 0 else ''
                 trend_color = '#22c55e' if crack_chg >= 0 else '#ef4444'
-                trend_text = "Widening (Oversupply Expected -> Rack prices may drop)" if crack_chg >= 0 else "Shrinking (Shortage Expected -> Rack prices may spike)"
+                trend_text = "Widening (Oversupply Expected -> Consider Waiting)" if crack_chg >= 0 else "Shrinking (Shortage Expected -> Consider Buying)"
                 trend_str = f'<span style="color:{trend_color};font-weight:700;">{sign}${crack_chg:.2f} / bbl</span> &nbsp;&middot;&nbsp; <span>{trend_text}</span>'
             
             crack_spread_html = f'''
@@ -555,9 +555,9 @@ def send_sms(all_data, now, alert_context):
             sma10 = info.get('sma_10')
             if sma3 and sma10:
                 if sma3 > sma10:
-                    lines.append("Mom: Bullish (Upward)")
+                    lines.append("Mom: Bullish (Consider Buy)")
                 else:
-                    lines.append("Mom: Bearish (Downward)")
+                    lines.append("Mom: Bearish (Consider Wait)")
                     
             lines.append("")
             
@@ -572,7 +572,7 @@ def send_sms(all_data, now, alert_context):
                 yest_crack = (rb['yesterday_close'] * 28) + (ho['yesterday_close'] * 14) - cl['yesterday_close']
                 crack_chg = crack - yest_crack
                 sign = '+' if crack_chg >= 0 else ''
-                trend = "Widening (Supply rising -> Prices may drop)" if crack_chg >= 0 else "Shrinking (Supply falling -> Prices may rise)"
+                trend = "Widening (Supply rising -> Consider Wait)" if crack_chg >= 0 else "Shrinking (Supply falling -> Consider Buy)"
                 lines[-1] = f"CRACK SPREAD: ${crack:.2f} ({sign}${crack_chg:.2f})"
                 lines.append(f"Trend: {trend}")
             lines.append("")
