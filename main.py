@@ -10,13 +10,16 @@ matplotlib.use('Agg')
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
-from datetime import datetime, date, timezone
+from datetime import datetime, date, time, timezone, timedelta
 from matplotlib.figure import Figure
 import requests
 import pytz
 import yfinance as yf
 import concurrent.futures
-import pandas_market_calendars as mcal
+try:
+    import pandas_market_calendars as mcal
+except ImportError:
+    mcal = None
 
 SCHWAB_APP_KEY       = os.environ['SCHWAB_APP_KEY']
 SCHWAB_APP_SECRET    = os.environ['SCHWAB_APP_SECRET']
@@ -55,6 +58,10 @@ COMMODITIES = {
     }
 }
 
+REQUEST_TIMEOUT = 20
+MAX_GH_VARIABLE_VALUE_BYTES = 48 * 1024
+MAX_SMS_CHARS = 1200
+
 def get_session_start(dt):
     import datetime
     if dt.hour >= 17:
@@ -74,58 +81,153 @@ DELIVERY_MONTH_CODES = {
     7: 'N', 8: 'Q', 9: 'U', 10: 'V', 11: 'X', 12: 'Z'
 }
 
-def get_front_month_schwab_symbol(dt, prefix):
+def add_month(year, month, offset):
+    month += offset
+    year += (month - 1) // 12
+    month = ((month - 1) % 12) + 1
+    return year, month
+
+def is_nymex_business_day(day):
+    if day.weekday() >= 5:
+        return False
+    if not mcal:
+        return day not in us_market_holidays(day.year)
+    try:
+        cal = mcal.get_calendar('NYMEX')
+        schedule = cal.schedule(start_date=day, end_date=day)
+        return not schedule.empty
+    except Exception:
+        return day not in us_market_holidays(day.year)
+
+def observed_fixed_holiday(year, month, day):
+    holiday = date(year, month, day)
+    if holiday.weekday() == 5:
+        return holiday - timedelta(days=1)
+    if holiday.weekday() == 6:
+        return holiday + timedelta(days=1)
+    return holiday
+
+def nth_weekday(year, month, weekday, n):
+    day = date(year, month, 1)
+    while day.weekday() != weekday:
+        day += timedelta(days=1)
+    return day + timedelta(days=7 * (n - 1))
+
+def last_weekday(year, month, weekday):
     import calendar
-    from datetime import date, timedelta
+    day = date(year, month, calendar.monthrange(year, month)[1])
+    while day.weekday() != weekday:
+        day -= timedelta(days=1)
+    return day
+
+def easter_date(year):
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    return date(year, month, day)
+
+def us_market_holidays(year):
+    return {
+        observed_fixed_holiday(year, 1, 1),
+        nth_weekday(year, 1, 0, 3),
+        nth_weekday(year, 2, 0, 3),
+        easter_date(year) - timedelta(days=2),
+        last_weekday(year, 5, 0),
+        observed_fixed_holiday(year, 6, 19),
+        observed_fixed_holiday(year, 7, 4),
+        nth_weekday(year, 9, 0, 1),
+        nth_weekday(year, 11, 3, 4),
+        observed_fixed_holiday(year, 12, 25),
+    }
+
+def previous_nymex_business_day(day):
+    day -= timedelta(days=1)
+    while not is_nymex_business_day(day):
+        day -= timedelta(days=1)
+    return day
+
+def last_nymex_business_day(year, month):
+    import calendar
+    day = date(year, month, calendar.monthrange(year, month)[1])
+    while not is_nymex_business_day(day):
+        day -= timedelta(days=1)
+    return day
+
+def refined_product_last_trade_date(contract_year, contract_month):
+    prev_year, prev_month = add_month(contract_year, contract_month, -1)
+    return last_nymex_business_day(prev_year, prev_month)
+
+def crude_last_trade_date(contract_year, contract_month):
+    prev_year, prev_month = add_month(contract_year, contract_month, -1)
+    twenty_fifth = date(prev_year, prev_month, 25)
+    business_days = 4 if not is_nymex_business_day(twenty_fifth) else 3
+    day = twenty_fifth
+    for _ in range(business_days):
+        day = previous_nymex_business_day(day)
+    return day
+
+def contract_last_trade_date(contract_year, contract_month, prefix):
+    if prefix in ('RB', 'HO'):
+        return refined_product_last_trade_date(contract_year, contract_month)
+    if prefix == 'CL':
+        return crude_last_trade_date(contract_year, contract_month)
+    raise ValueError(f"Unsupported futures prefix: {prefix}")
+
+def get_front_month_contract(dt, prefix):
     today = dt.date()
-    candidate_month = today.month + 1
-    candidate_year  = today.year
-    if candidate_month > 12:
-        candidate_month = 1
-        candidate_year += 1
-    for _ in range(14):
-        prev_month = candidate_month - 1
-        prev_year  = candidate_year
-        if prev_month == 0:
-            prev_month = 12
-            prev_year -= 1
-        last_day = calendar.monthrange(prev_year, prev_month)[1]
-        ltd = date(prev_year, prev_month, last_day)
-        while ltd.weekday() >= 5:
-            ltd -= timedelta(days=1)
-        days_away = (ltd - today).days
-        if days_away > 10:
-            break
-        candidate_month += 1
-        if candidate_month > 12:
-            candidate_month = 1
-            candidate_year += 1
-    code = DELIVERY_MONTH_CODES[candidate_month]
-    return f"/{prefix}{code}{candidate_year % 100:02d}"
+    contract_year, contract_month = add_month(today.year, today.month, 1)
+    for _ in range(24):
+        ltd = contract_last_trade_date(contract_year, contract_month, prefix)
+        if today <= ltd:
+            return contract_year, contract_month, ltd
+        contract_year, contract_month = add_month(contract_year, contract_month, 1)
+    raise RuntimeError(f"Could not resolve front-month contract for {prefix}")
+
+def get_front_month_schwab_symbol(dt, prefix):
+    contract_year, contract_month, _ = get_front_month_contract(dt, prefix)
+    code = DELIVERY_MONTH_CODES[contract_month]
+    return f"/{prefix}{code}{contract_year % 100:02d}"
+
+def schwab_to_yfinance_symbol(schwab_symbol):
+    return schwab_symbol.lstrip('/') + '.NYM'
 
 def get_repo_variable(name):
     url = f"https://api.github.com/repos/{GH_REPO}/actions/variables/{name}"
-    res = requests.get(url, headers=GH_HEADERS)
+    res = requests.get(url, headers=GH_HEADERS, timeout=REQUEST_TIMEOUT)
     if res.status_code == 404:
         return None
     res.raise_for_status()
     return res.json().get("value")
 
 def set_repo_variable(name, value):
+    if len(value.encode('utf-8')) > MAX_GH_VARIABLE_VALUE_BYTES:
+        raise ValueError(f"GitHub Actions variable {name} exceeds 48 KB")
     url = f"https://api.github.com/repos/{GH_REPO}/actions/variables/{name}"
-    res = requests.patch(url, headers=GH_HEADERS, json={"name": name, "value": value})
+    res = requests.patch(url, headers=GH_HEADERS, json={"name": name, "value": value}, timeout=REQUEST_TIMEOUT)
     if res.status_code == 404:
         res = requests.post(
             f"https://api.github.com/repos/{GH_REPO}/actions/variables",
             headers=GH_HEADERS,
-            json={"name": name, "value": value}
+            json={"name": name, "value": value},
+            timeout=REQUEST_TIMEOUT
         )
     res.raise_for_status()
 
 def update_github_secret(new_refresh_token):
     from nacl import encoding, public
     url_key = f"https://api.github.com/repos/{GH_REPO}/actions/secrets/public-key"
-    res_key = requests.get(url_key, headers=GH_HEADERS)
+    res_key = requests.get(url_key, headers=GH_HEADERS, timeout=REQUEST_TIMEOUT)
     res_key.raise_for_status()
     key_data = res_key.json()
     public_key = key_data['key']
@@ -140,7 +242,8 @@ def update_github_secret(new_refresh_token):
     res_secret = requests.put(
         url_secret,
         headers=GH_HEADERS,
-        json={"encrypted_value": encrypted_b64, "key_id": key_id}
+        json={"encrypted_value": encrypted_b64, "key_id": key_id},
+        timeout=REQUEST_TIMEOUT
     )
     res_secret.raise_for_status()
 
@@ -158,6 +261,23 @@ def save_price_history(history, prefix):
         set_repo_variable(f"{prefix}_PRICE_HISTORY", json.dumps(history))
     except Exception as e:
         print(f"Warning: could not save price history for {prefix}: {e}")
+
+def load_alert_state():
+    raw = get_repo_variable("ALERT_STATE")
+    if not raw:
+        return {}
+    try:
+        state = json.loads(raw)
+        return state if isinstance(state, dict) else {}
+    except Exception:
+        return {}
+
+def save_alert_state(state):
+    keep = {}
+    for key, value in state.items():
+        if isinstance(value, str):
+            keep[key] = value
+    set_repo_variable("ALERT_STATE", json.dumps(keep, sort_keys=True))
 
 def append_price(history, ts, price):
     session_start = get_session_start(ts)
@@ -626,6 +746,8 @@ def send_sms(all_data, now, alert_context):
             
     lines.append(f"{time_str}")
     body = "\n".join(lines).strip()
+    if len(body) > MAX_SMS_CHARS:
+        body = body[:MAX_SMS_CHARS - 30].rstrip() + "\n... see email for full details"
 
     try:
         sms_msg = MIMEText(body)
@@ -679,39 +801,91 @@ def send_email(subject, all_data, now, alert_context):
     send_sms(all_data, now, alert_context)
 
 def send_once_today(key, subject, all_data, now, alert_context):
-    session_str = get_session_date_str(now).replace('-', '_')
-    db_key = f"SENT_{key}_{session_str}"
+    session_str = get_session_date_str(now)
+    db_key = f"SENT_{key}"
+    state = load_alert_state()
     
-    if get_repo_variable(db_key):
+    if state.get(db_key) == session_str:
         print(f"Alert {key} already sent today. Skipping.")
         return
         
     send_email(subject, all_data, now, alert_context)
     try:
-        set_repo_variable(db_key, "1")
+        state[db_key] = session_str
+        save_alert_state(state)
     except Exception as e:
         print(f"Warning: could not save lock {db_key}: {e}")
 
 
 def is_market_open(dt):
+    def simple_globex_energy_hours(ts):
+        local = ts.astimezone(TZ)
+        local_time = local.time()
+        weekday = local.weekday()
+        if weekday == 5:
+            return False
+        if weekday == 6:
+            return local_time >= time(17, 0)
+        if weekday == 4 and local_time >= time(16, 0):
+            return False
+        if time(16, 0) <= local_time < time(17, 0):
+            return False
+        return True
+
     try:
+        if not mcal:
+            raise RuntimeError("pandas_market_calendars is not installed")
         cme = mcal.get_calendar('CMEGlobex_RB')
-        from datetime import timedelta
         start = (dt - timedelta(days=1)).date()
         end = (dt + timedelta(days=2)).date()
         schedule = cme.schedule(start_date=start, end_date=end)
         return cme.open_at_time(schedule, dt)
     except Exception as e:
-        print(f"Calendar check failed: {e}. Defaulting to open.")
-        return True
+        fallback_open = simple_globex_energy_hours(dt)
+        print(f"Calendar check failed: {e}. Using simple Globex-hours fallback: open={fallback_open}.")
+        return fallback_open
 
 def fetch_commodity(prefix, cfg, now, access_token):
-    schwab_symbol = get_front_month_schwab_symbol(now, prefix)
-    dynamic_yf_symbol = schwab_symbol.replace('/', '') + '.NYM'
-    print(f"[{prefix}] Targeting front-month: Schwab {schwab_symbol} | yf {dynamic_yf_symbol}")
+    contract_year, contract_month, ltd = get_front_month_contract(now, prefix)
+    schwab_symbol = f"/{prefix}{DELIVERY_MONTH_CODES[contract_month]}{contract_year % 100:02d}"
+    dynamic_yf_symbol = schwab_to_yfinance_symbol(schwab_symbol)
+    print(f"[{prefix}] Targeting front-month: Schwab {schwab_symbol} | yf {dynamic_yf_symbol} | LTD {ltd}")
     
     current_price = open_price = high_price = low_price = None
     data_source = None
+
+    def quote_float(quote, *keys):
+        for key in keys:
+            value = quote.get(key)
+            if value not in (None, ''):
+                try:
+                    value = float(value)
+                    if value > 0:
+                        return value
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    def fetch_yfinance_quote(symbol):
+        yf_t = yf.Ticker(symbol)
+        try:
+            current = float(yf_t.fast_info['last_price'])
+        except Exception:
+            current = None
+        hist = yf_t.history(period='1d', interval='5m')
+        if hist.empty and not current:
+            raise RuntimeError(f"No Yahoo Finance data for {symbol}")
+        if not current:
+            current = float(hist['Close'].iloc[-1])
+        if not hist.empty:
+            open_ = float(hist['Open'].iloc[0])
+            high_ = float(hist['High'].max())
+            low_ = float(hist['Low'].min())
+        else:
+            open_ = current
+            high_ = low_ = 0.0
+        return current, open_, high_, low_
+
     try:
         res = requests.get(
             "https://api.schwabapi.com/marketdata/v1/quotes",
@@ -726,30 +900,35 @@ def fetch_commodity(prefix, cfg, now, access_token):
         else:
             quote = res_json[list(res_json.keys())[0]]['quote']
         
-        current_price = float(quote['lastPrice'])
-        open_price    = float(quote['openPrice'])
-        high_price    = float(quote.get('highPrice', 0.0))
-        low_price     = float(quote.get('lowPrice', 0.0))
-        schwab_close  = float(quote.get('closePrice', 0.0))
+        current_price = quote_float(quote, 'lastPrice', 'mark', 'bidPrice', 'askPrice')
+        open_price    = quote_float(quote, 'openPrice') or current_price
+        high_price    = quote_float(quote, 'highPrice') or 0.0
+        low_price     = quote_float(quote, 'lowPrice') or 0.0
+        schwab_close  = quote_float(quote, 'closePrice') or 0.0
+        if not current_price:
+            raise RuntimeError(f"Schwab quote for {schwab_symbol} did not include a usable price")
         data_source   = 'schwab'
         print(f"[{prefix}] Schwab success")
     except Exception as e:
         print(f"[{prefix}] Schwab failed: {e}. Falling back to yfinance.")
         import time
+        yf_symbols = [dynamic_yf_symbol]
+        if cfg['yf_symbol'] not in yf_symbols:
+            yf_symbols.append(cfg['yf_symbol'])
         for attempt in range(3):
             try:
-                yf_t = yf.Ticker(cfg['yf_symbol'])
-                current_price = float(yf_t.fast_info['last_price'])
-                hist = yf_t.history(period='1d', interval='5m')
-                if not hist.empty:
-                    open_price = float(hist['Open'].iloc[0])
-                    high_price = float(hist['High'].max())
-                    low_price  = float(hist['Low'].min())
+                last_err = None
+                for yf_symbol in yf_symbols:
+                    try:
+                        current_price, open_price, high_price, low_price = fetch_yfinance_quote(yf_symbol)
+                        dynamic_yf_symbol = yf_symbol
+                        break
+                    except Exception as yf_symbol_err:
+                        last_err = yf_symbol_err
                 else:
-                    open_price = current_price
-                    high_price = low_price = 0.0
+                    raise last_err or RuntimeError("Yahoo Finance fallback failed")
                 data_source = 'yfinance'
-                print(f"[{prefix}] yfinance fallback success")
+                print(f"[{prefix}] yfinance fallback success ({dynamic_yf_symbol})")
                 break
             except Exception as yf_err:
                 if attempt < 2:
@@ -791,12 +970,15 @@ def fetch_commodity(prefix, cfg, now, access_token):
     baseline_price = yesterday_close if yesterday_close else open_price
     daily_pct = ((current_price - baseline_price) / baseline_price) * 100
 
-    history_intra = load_price_history(prefix)
-    history_intra = append_price(history_intra, now, current_price)
-    save_price_history(history_intra, prefix)
-    
-    chart_intra = generate_intraday_chart(history_intra, current_price, baseline_price, high_price, low_price, daily_pct, cfg['name'])
-    chart_5d = generate_5day_chart(history_5d, current_price)
+    if cfg.get('hidden'):
+        chart_intra = None
+        chart_5d = None
+    else:
+        history_intra = load_price_history(prefix)
+        history_intra = append_price(history_intra, now, current_price)
+        save_price_history(history_intra, prefix)
+        chart_intra = generate_intraday_chart(history_intra, current_price, baseline_price, high_price, low_price, daily_pct, cfg['name'])
+        chart_5d = generate_5day_chart(history_5d, current_price)
     
     print(f"[{prefix}] Fetched: ${current_price:.4f} ({daily_pct:+.2f}%)")
     return {
@@ -831,22 +1013,27 @@ if __name__ == "__main__":
         auth_res = requests.post(
             "https://api.schwabapi.com/v1/oauth/token",
             data={"grant_type": "refresh_token", "refresh_token": SCHWAB_REFRESH_TOKEN},
-            headers={"Authorization": f"Basic {auth_header}", "Content-Type": "application/x-www-form-urlencoded"}
+            headers={"Authorization": f"Basic {auth_header}", "Content-Type": "application/x-www-form-urlencoded"},
+            timeout=REQUEST_TIMEOUT
         )
         auth_res.raise_for_status()
         auth_json = auth_res.json()
         access_token = auth_json['access_token']
-        new_refresh = auth_json['refresh_token']
+        new_refresh = auth_json.get('refresh_token')
         print("Schwab OAuth refreshed")
     except Exception as e:
         print(f"FATAL: OAuth refresh failed: {e}")
         sys.exit(1)
 
-    try:
-        update_github_secret(new_refresh)
-    except Exception as e:
-        print(f"FATAL: GitHub secret update failed: {e}")
-        sys.exit(1)
+    if new_refresh and new_refresh != SCHWAB_REFRESH_TOKEN:
+        try:
+            update_github_secret(new_refresh)
+            print("Schwab refresh token rotated in GitHub Secrets")
+        except Exception as e:
+            print(f"FATAL: GitHub secret update failed: {e}")
+            sys.exit(1)
+    else:
+        print("Schwab did not return a new refresh token; keeping existing GitHub Secret")
 
     all_data = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(COMMODITIES)) as executor:
@@ -908,8 +1095,8 @@ if __name__ == "__main__":
             }
         )
 
-    if now.hour == 14:
-        send_once_today('VERDICT_200', "Final Verdict: Exxon Price Predictor", all_data, now, {
+    if now.hour == 14 and now.minute >= 35:
+        send_once_today('VERDICT_1435', "Final Verdict: Exxon Price Predictor", all_data, now, {
             'label': 'Final Verdict',
             'action': 'Comparing 1:30 PM Settlement to Yesterday to predict 6:00 PM Exxon Rack change.',
             'action_color': '#8b5cf6'

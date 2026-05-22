@@ -1,14 +1,15 @@
 import base64
+import getpass
+import secrets
 import urllib.parse
 
 try:
     import requests
 except ImportError:
-    import subprocess
     import sys
-    print("Installing required 'requests' library...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "requests"])
-    import requests
+    print("[ERROR] Missing required library: requests")
+    print("Install dependencies first with: python3 -m pip install -r requirements.txt")
+    sys.exit(1)
 
 print("======================================================================")
 print("             CHARLES SCHWAB API INITIAL OAUTH HANDSHAKE               ")
@@ -18,14 +19,16 @@ print("Once generated, you will paste it into your GitHub Secrets.\n")
 
 # 1. Get credentials from user
 app_key = input("Enter your Schwab App Key: ").strip()
-app_secret = input("Enter your Schwab App Secret: ").strip()
+app_secret = getpass.getpass("Enter your Schwab App Secret: ").strip()
 redirect_uri = input("Enter your Schwab App Redirect URI (usually https://127.0.0.1 or https://localhost): ").strip()
+state = secrets.token_urlsafe(24)
 
 # 2. Construct the authorization URL
 params = {
     "response_type": "code",
     "client_id": app_key,
-    "redirect_uri": redirect_uri
+    "redirect_uri": redirect_uri,
+    "state": state
 }
 auth_url = f"https://api.schwabapi.com/v1/oauth/authorize?{urllib.parse.urlencode(params)}"
 
@@ -46,6 +49,10 @@ code = redirected_input
 if "code=" in redirected_input:
     parsed = urllib.parse.urlparse(redirected_input)
     query_params = urllib.parse.parse_qs(parsed.query)
+    returned_state = query_params.get("state", [None])[0]
+    if returned_state and returned_state != state:
+        print("[ERROR] OAuth state mismatch. Do not use this authorization code.")
+        exit(1)
     # The code parameter has a suffix "%40" (which is @ decoded). Schwab codes usually end with %40.
     # parse_qs automatically decodes percent encoding, which is correct for the API call.
     code = query_params.get("code", [None])[0]
@@ -71,7 +78,7 @@ data = {
 }
 
 try:
-    res = requests.post("https://api.schwabapi.com/v1/oauth/token", data=data, headers=headers)
+    res = requests.post("https://api.schwabapi.com/v1/oauth/token", data=data, headers=headers, timeout=30)
     res.raise_for_status()
     tokens = res.json()
     
