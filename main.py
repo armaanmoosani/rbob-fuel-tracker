@@ -1051,32 +1051,30 @@ def main():
         print(f"Market is closed at {now}. Exiting to prevent stale alerts.")
         return
 
-    auth_header = base64.b64encode(f"{SCHWAB_APP_KEY}:{SCHWAB_APP_SECRET}".encode()).decode()
-    try:
-        auth_res = requests.post(
-            "https://api.schwabapi.com/v1/oauth/token",
-            data={"grant_type": "refresh_token", "refresh_token": SCHWAB_REFRESH_TOKEN},
-            headers={"Authorization": f"Basic {auth_header}", "Content-Type": "application/x-www-form-urlencoded"},
-            timeout=REQUEST_TIMEOUT
-        )
-        auth_res.raise_for_status()
-        auth_json = auth_res.json()
-        access_token = auth_json['access_token']
-        new_refresh = auth_json.get('refresh_token')
-        print("Schwab OAuth refreshed")
-    except Exception as e:
-        print(f"FATAL: OAuth refresh failed: {e}")
-        sys.exit(1)
-
-    if new_refresh and new_refresh != SCHWAB_REFRESH_TOKEN:
+    access_token = None
+    if SCHWAB_APP_KEY and SCHWAB_APP_SECRET and SCHWAB_REFRESH_TOKEN:
+        auth_header = base64.b64encode(f"{SCHWAB_APP_KEY}:{SCHWAB_APP_SECRET}".encode()).decode()
         try:
-            update_github_secret(new_refresh)
-            print("Schwab refresh token rotated in GitHub Secrets")
+            auth_res = requests.post(
+                "https://api.schwabapi.com/v1/oauth/token",
+                data={"grant_type": "refresh_token", "refresh_token": SCHWAB_REFRESH_TOKEN},
+                headers={"Authorization": f"Basic {auth_header}", "Content-Type": "application/x-www-form-urlencoded"},
+                timeout=REQUEST_TIMEOUT
+            )
+            auth_res.raise_for_status()
+            auth_json = auth_res.json()
+            access_token = auth_json['access_token']
+            new_refresh = auth_json.get('refresh_token')
+            print("Schwab OAuth refreshed")
+            
+            if new_refresh and new_refresh != SCHWAB_REFRESH_TOKEN:
+                try:
+                    update_github_secret(new_refresh)
+                    print("Schwab refresh token rotated in GitHub Secrets")
+                except Exception as e:
+                    print(f"Warning: GitHub secret update failed: {e}")
         except Exception as e:
-            print(f"FATAL: GitHub secret update failed: {e}")
-            sys.exit(1)
-    else:
-        print("Schwab did not return a new refresh token; keeping existing GitHub Secret")
+            print(f"Schwab OAuth refresh failed: {e}. Bypassing Schwab and forcing Yahoo Finance fallback.")
 
     all_data = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(COMMODITIES)) as executor:
