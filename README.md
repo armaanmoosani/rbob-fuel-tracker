@@ -1,27 +1,35 @@
 # Graves Oil Pricing Risk Engine
 
-An institutional-grade, fully automated fuel purchasing predictor built specifically for independent gas stations and bulk fuel buyers. 
+An institutional-grade, fully automated wholesale fuel purchasing predictor built specifically for independent gas stations and bulk fuel buyers to optimize physical inventory procurement.
 
-This system acts as a headless, serverless data pipeline and machine learning engine. It mathematically correlates the physical supplier rack prices (Graves Oil Company) with the NYMEX commodity futures market to predict whether wholesale gasoline and diesel prices will rise or fall tomorrow.
+This system acts as a headless, serverless data pipeline and machine learning engine. It mathematically correlates the physical supplier rack prices (Graves Oil Company) with the NYMEX commodity futures market to predict whether wholesale gasoline and diesel prices will rise or fall tomorrow, allowing you to buy before hikes and wait before drops.
+
+---
 
 ## Core Features
 
-- **Automated Price Ingestion (`ingest_prices.py`)**: Nightly connects via IMAP to read the official supplier invoice. It parses the true `Date` header, extracts the exact cents-per-gallon price for E10 Unleaded, E10 Premium, and Clear Diesel, and appends it to an immutable CSV history.
-- **Dynamic Regime Detection (`backtest.py`)**: Runs every night to backtest the historical relationship between NYMEX futures and Graves Oil. It dynamically selects the optimal `LAG_DAYS` (0 vs 1) and optimal `ROLLING_WINDOW_DAYS` (e.g., 90, 120, 180) to maximize out-of-sample $R^2$, mathematically protecting you against quiet supplier formula changes.
-- **Asymmetric Thresholds**: Uses SciPy linear regression to calculate the exact 15th-percentile NYMEX move required to force the supplier to hike prices, isolating true signal from market noise.
-- **Real-Time SMS Alerts (`main.py`)**: Polls the Yahoo Finance API (`RB=F`, `HO=F`, `CL=F`) every 5 minutes. Tracks the 3:2:1 Crack Spread. At 2:35 PM CT (post-NYMEX settlement), it texts the dispatcher a clear "EXPECT HIKE", "EXPECT DROP", or "NO EDGE" verdict.
-- **Immutable Audit Log**: Every prediction is permanently written to `prediction_log.csv` milliseconds before the SMS fires, guaranteeing an unalterable history of the bot's decisions.
-- **Weekly Performance Dashboard (`weekly_report.py`)**: Automatically backfills prediction outcomes by comparing them to the next trading day's physical rack price. Every Saturday morning, it emails a premium HTML dashboard containing a Confusion Matrix and a Matplotlib chart plotting Cumulative Savings in ¢/gal.
+- **Hourly Ingestion Retries (`ingest_prices.py`)**: Nightly connects via IMAP to read the official supplier invoice. It queries hourly from 8:00 PM to 12:00 AM CT to prevent false missing-email alarms, handles target date calculations across the midnight boundary, and appends parsed rack prices to an immutable CSV history.
+- **Walk-Forward Calibration (`backtest.py`)**: Re-engineers threshold calibration using a robust 3-fold Walk-Forward Validation strategy over the last 365 days of history (90-day out-of-sample test windows). Parameters ($W, Hp, Dp$) are chosen to maximize **median out-of-sample savings** to prevent backtest overfitting.
+- **Dynamic Volatility & Z-Score Conviction (`main.py`)**: Evaluates the strength of futures moves using the rolling standard deviation of daily changes ($\sigma$). It translates daily changes into Z-scores to grade alerts by conviction: **High Conviction** ($|Z| \ge 1.5$), **Moderate Conviction** ($1.0 \le |Z| < 1.5$), or **Low Conviction** ($|Z| < 1.0$).
+- **Quantified Deferral Risk (CVaR)**: Computes the 95% Conditional Value-at-Risk (worst-case tail risk) over the optimal window. For "WAIT" alerts, it computes the expected price spike cost:
+  *e.g., "Risk Note: On the worst 5% of days historically, rack prices spiked +4.20¢/gal (+$357 per 8,500 gal truck)."*
+- **Real-Time SMS & Email Alerts**: Polls the Schwab API and Yahoo Finance API (`RB=F`, `HO=F`, `CL=F`) during CME trading hours. At 2:35 PM CT (post-NYMEX settlement), it sends structured, high-value alerts containing the verdict, Z-score conviction, and tail-risk warnings.
+- **Overnight verification loop**: Automatically backfills prediction outcomes by comparing them to the next trading day's physical rack price, appending results to `prediction_log.csv` and displaying the confirmation table in morning notifications.
+- **Outlook-Safe Weekly Dashboard (`weekly_report.py`)**: Runs every Saturday morning. It calculates cumulative savings in cents-per-gallon and equivalent dollar totals (assuming an 8,500 gallon capacity delivery truck). It runs a stable **180-day permutation significance test** (computing a p-value to prove model edge over random chance) and formats the dashboard using nested HTML tables for rendering safety.
+- **Blockchain-Style Data Validation (`validate_data.py`)**: Protects the database against corruption and manual edits using an append-only registry of SHA-256 hashes (`data/integrity_hashes.csv`), treating `config.json` as a mutable schema-checked file.
+
+---
 
 ## System Architecture
 
-1. **GitHub Actions Cron Jobs**: 
-    - Real-Time Tracker runs every 5 minutes during CME trading hours.
-    - Nightly Ingestion runs at 11:45 PM CT to ingest Graves Oil invoices.
-    - Nightly Backtest auto-tunes the ML model parameters at 11:55 PM CT.
-    - Weekly Dashboard runs at 3:00 AM CT on Saturdays.
-2. **Data Storage**: `data/graves_history.csv` and `data/prediction_log.csv` act as lightweight, headless databases synced directly to the `main` git branch. 
-3. **No Database/Servers**: 100% serverless execution.
+1. **GitHub Actions Workflows**: 
+   - **Real-Time Tracker (`tracker.yml`)**: Runs every 5 minutes during CME Globex hours to monitor futures and send alerts.
+   - **Nightly Ingestion & Backtest (`backtest_ingest.yml`)**: Checks hourly from 8:00 PM to 12:00 AM Chicago time to pull Graves invoices, validate hashes, run walk-forward calibration, and push configuration files.
+   - **Weekly Dashboard (`weekly_report.yml`)**: Runs Saturday mornings at 3:00 AM CT to backfill pending outcomes, compute permutation significance, generate Matplotlib performance charts, and send reports.
+2. **Data Storage**: `data/graves_history.csv` and `data/prediction_log.csv` act as lightweight, flat-file databases synced directly to the `main` git branch. 
+3. **Serverless Execution**: 100% serverless execution on GitHub Actions.
+
+---
 
 ## Setup Instructions
 
@@ -34,6 +42,9 @@ To deploy this securely to your own private repository:
    - `GMAIL_USER`: The email address the bot uses to send the SMS text emails.
    - `GMAIL_APP_PASSWORD`: The Google App Password for the sending account.
    - `TO_EMAIL`: The destination SMS gateway (e.g., `1234567890@vtext.com` for Verizon).
+   - `PHONE_SMS_ADDRESS`: Optional comma-separated SMS gateway addresses (falls back to `TO_EMAIL` if empty).
+
+---
 
 ## Disclaimer
 
