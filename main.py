@@ -1242,7 +1242,7 @@ def send_sms(all_data, now, alert_context):
         
         phones = TO_PHONE_SMS
         for phone in phones:
-            sms_msg['To'] = phone
+            sms_msg.replace_header('To', phone) if 'To' in sms_msg else sms_msg.add_header('To', phone)
             srv.sendmail(GMAIL_USER, phone, sms_msg.as_string())
             print(f"SMS sent to gateway ({phone})")
             
@@ -1336,7 +1336,7 @@ def send_daily_prompt(now):
         
         phones = TO_PHONE_SMS
         for phone in phones:
-            sms_msg['To'] = phone
+            sms_msg.replace_header('To', phone) if 'To' in sms_msg else sms_msg.add_header('To', phone)
             srv.sendmail(GMAIL_USER, phone, sms_msg.as_string())
             print(f"Daily prompt sent to {phone}")
             
