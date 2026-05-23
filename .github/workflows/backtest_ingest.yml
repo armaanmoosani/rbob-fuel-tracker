@@ -32,5 +32,7 @@ jobs:
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
           GRAVES_EMAIL: ${{ secrets.GRAVES_EMAIL }}
           GRAVES_APP_PASSWORD: ${{ secrets.GRAVES_APP_PASSWORD }}
+          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_REPO: ${{ github.repository }}
         run: |
           python ingest_prices.py

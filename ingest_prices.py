@@ -149,6 +149,54 @@ def read_daily_settlement(target_date_str):
         return ds
     return None
 
+def get_github_settlement_snapshots(target_date_str):
+    gh_pat = os.environ.get('GH_PAT')
+    gh_repo = os.environ.get('GH_REPO')
+    if not gh_pat or not gh_repo:
+        print("GitHub credentials missing from environment. Skipping GitHub variable lookup.")
+        return None
+        
+    import requests
+    headers = {
+        "Authorization": f"token {gh_pat}",
+        "Accept": "application/vnd.github.v3+json"
+    }
+    
+    try:
+        # Fetch SETTLE_SNAPSHOT_RB and SETTLE_SNAPSHOT_HO
+        rb_url = f"https://api.github.com/repos/{gh_repo}/actions/variables/SETTLE_SNAPSHOT_RB"
+        ho_url = f"https://api.github.com/repos/{gh_repo}/actions/variables/SETTLE_SNAPSHOT_HO"
+        
+        rb_res = requests.get(rb_url, headers=headers, timeout=10)
+        ho_res = requests.get(ho_url, headers=headers, timeout=10)
+        
+        rb_val, ho_val = None, None
+        
+        if rb_res.status_code == 200:
+            rb_snap = json.loads(rb_res.json().get("value", "{}"))
+            if rb_snap.get("date") == target_date_str:
+                rb_val = float(rb_snap["price"])
+                
+        if ho_res.status_code == 200:
+            ho_snap = json.loads(ho_res.json().get("value", "{}"))
+            if ho_snap.get("date") == target_date_str:
+                ho_val = float(ho_snap["price"])
+                
+        if rb_val is not None and ho_val is not None:
+            return {
+                "date": target_date_str,
+                "rbob_settlement": rb_val,
+                "heating_oil_settlement": ho_val,
+                "source": "github_variables"
+            }
+        else:
+            print("GitHub variables for settlement snapshots were missing, stale, or incomplete.")
+    except Exception as e:
+        print(f"Failed to fetch settlement snapshots from GitHub variables: {e}")
+        
+    return None
+
+
 def main():
     print("Starting SMS ingest...")
     validate_data.validate_all(DATA_DIR)
@@ -214,7 +262,13 @@ def main():
     # Get settlement data
     ds = read_daily_settlement(date_str)
     if not ds:
-        print(f"daily_settlement.json missing or stale for {date_str}. Attempting Yahoo Finance fallback...")
+        print(f"daily_settlement.json missing or stale for {date_str}. Trying GitHub repository variables...")
+        ds = get_github_settlement_snapshots(date_str)
+        if ds:
+            print(f"GitHub variables success: RB={ds['rbob_settlement']}, HO={ds['heating_oil_settlement']}")
+            
+    if not ds:
+        print(f"GitHub variables missing or stale. Attempting Yahoo Finance fallback...")
         try:
             import yfinance as yf
             rb_ticker = yf.Ticker("RB=F")

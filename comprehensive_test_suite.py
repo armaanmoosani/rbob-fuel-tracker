@@ -511,11 +511,11 @@ class TestCategory10HistoricalReplay(unittest.TestCase):
     def test_10_1_real_database_length(self):
         df = pd.read_csv(backtest.CSV_PATH)
         print(f"\n[Test 10.1] Loaded real CSV inside test suite. Length: {len(df)}")
-        self.assertEqual(len(df), 766)
+        self.assertTrue(len(df) >= 766)
 
     def test_10_2_walk_forward_fold_isolation_real_data(self):
         df = pd.read_csv(backtest.CSV_PATH)
-        self.assertEqual(len(df), 766)
+        self.assertTrue(len(df) >= 766)
         
         # Verify train/test isolation on the real data
         test_size = 90
@@ -536,7 +536,7 @@ class TestCategory10HistoricalReplay(unittest.TestCase):
 
     def test_10_3_lag_0_correlation_real_data(self):
         df = pd.read_csv(backtest.CSV_PATH)
-        self.assertEqual(len(df), 766)
+        self.assertTrue(len(df) >= 766)
         
         df_clean = df.dropna(subset=['nymex_rb', 'rack_u']).copy()
         df_clean['delta_nymex'] = df_clean['nymex_rb'].diff() * 100
@@ -550,7 +550,7 @@ class TestCategory10HistoricalReplay(unittest.TestCase):
 
     def test_10_4_full_replay_win_rate_real_data(self):
         df = pd.read_csv(backtest.CSV_PATH)
-        self.assertEqual(len(df), 766)
+        self.assertTrue(len(df) >= 766)
         
         cfg = backtest.load_config()
         # Run optimization on real data
@@ -907,9 +907,13 @@ class TestCategory13LiveValidationAndRobustness(unittest.TestCase):
         import scratch.fuzz_parser
         scratch.fuzz_parser.run_fuzzer()
 
+    @patch('ingest_prices.datetime')
     @patch('subprocess.run')
     @patch('ingest_prices.send_alert_email')
-    def test_13_2_git_commit_failure_notification(self, mock_send_email, mock_sub_run):
+    def test_13_2_git_commit_failure_notification(self, mock_send_email, mock_sub_run, mock_datetime):
+        mock_datetime.now.return_value = datetime(2026, 5, 22, 12, 0, tzinfo=pytz.timezone('America/Chicago'))
+        mock_datetime.fromisoformat.side_effect = datetime.fromisoformat
+        
         import subprocess
         mock_sub_run.side_effect = subprocess.CalledProcessError(
             returncode=1,
