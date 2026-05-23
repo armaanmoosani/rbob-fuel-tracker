@@ -17,6 +17,8 @@ def load_config():
             return json.load(f)
     return {
         "MIN_ROWS_FOR_TUNING": 30,
+        "PRICE_MIN": 1.50,
+        "PRICE_MAX": 6.00,
         "BLEND_ALPHA": 0.3,
         "RB_HIKE_THRESHOLD_CENTS": 1.0,
         "RB_DROP_THRESHOLD_CENTS": -1.0,
@@ -61,7 +63,6 @@ def git_commit_push(message):
 def get_clean_deltas(df, nymex_col, rack_col):
     """
     Cleans and computes the daily price changes in cents.
-    Applies Monday and roll-period filters.
     """
     if 'delta_nymex' not in df.columns or 'delta_rack' not in df.columns:
         df = df.copy()
@@ -75,14 +76,6 @@ def get_clean_deltas(df, nymex_col, rack_col):
             df_clean['date'] = pd.to_datetime(df_clean['date'])
         except Exception:
             pass
-
-    # Exclude Mondays: spans 3 calendar days (high variance noise)
-    if 'date' in df_clean.columns and pd.api.types.is_datetime64_any_dtype(df_clean['date']):
-        df_clean = df_clean[df_clean['date'].dt.dayofweek != 0]
-
-    # Exclude first 5 days of each month (contract roll zone)
-    if 'date' in df_clean.columns and pd.api.types.is_datetime64_any_dtype(df_clean['date']):
-        df_clean = df_clean[df_clean['date'].dt.day > 5]
 
     return df_clean['delta_nymex'], df_clean['delta_rack']
 

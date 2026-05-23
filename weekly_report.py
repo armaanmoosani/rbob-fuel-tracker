@@ -12,6 +12,47 @@ import json
 import validate_data
 from scipy.stats import norm
 import pytz
+import re
+
+def mask_recipient(address):
+    if not address:
+        return "None"
+    if isinstance(address, (list, tuple)):
+        return [mask_recipient(x) for x in address]
+    address = str(address)
+    if ',' in address:
+        return [mask_recipient(x.strip()) for x in address.split(',') if x.strip()]
+    if '@' in address:
+        parts = address.split('@')
+        name = parts[0]
+        domain = parts[1]
+        if len(name) <= 3:
+            masked_name = "***"
+        else:
+            masked_name = name[:2] + "***" + name[-1:]
+        return f"{masked_name}@{domain}"
+    else:
+        if len(address) <= 4:
+            return "***"
+        return address[:2] + "***" + address[-2:]
+
+def mask_sensitive_text(text):
+    if not text:
+        return ""
+    text = str(text)
+    sensitive_vals = []
+    for env_var in ['GMAIL_USER', 'GRAVES_EMAIL', 'TO_EMAIL', 'PHONE_SMS_ADDRESS']:
+        val = os.environ.get(env_var, '')
+        if val:
+            for item in val.split(','):
+                item_stripped = item.strip()
+                if item_stripped and len(item_stripped) > 2:
+                    sensitive_vals.append(item_stripped)
+    sensitive_vals = sorted(list(set(sensitive_vals)), key=len, reverse=True)
+    for val in sensitive_vals:
+        text = text.replace(val, mask_recipient(val))
+    return text
+
 
 def mann_kendall_test(x):
     n = len(x)
@@ -723,7 +764,7 @@ def main():
         server.quit()
         print("Weekly report email sent.")
     except Exception as e:
-        print(f"Failed to send email: {e}")
+        print(f"Failed to send email: {mask_sensitive_text(e)}")
 
 if __name__ == "__main__":
     main()

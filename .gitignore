@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 email_preview.html
 .DS_Store
+*.log
+main.py.ast
+main.py.clean
+log.txt

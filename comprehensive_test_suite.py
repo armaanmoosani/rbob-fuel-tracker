@@ -197,14 +197,14 @@ class TestCategory2DatabaseIntegrity(unittest.TestCase):
         self.assertAlmostEqual(df.loc[1, 'delta_nymex'], 10.0)
         self.assertAlmostEqual(df.loc[2, 'delta_nymex'], -5.0)
 
-        # Apply get_clean_deltas exclusions
+        # Apply get_clean_deltas
         del_nymex, del_rack = backtest.get_clean_deltas(df, "nymex_rb", "rack_u")
         
-        # Mondays are dropped: Monday index is 1. Tuesday index is 2. Friday index is 0 (diff is NaN, dropped).
-        # Tuesday should remain.
-        self.assertNotIn(1, del_nymex.index) # Monday dropped
+        # Mondays are NOT dropped anymore: Monday index is 1, Tuesday index is 2. Friday index is 0 (diff is NaN, dropped).
+        self.assertIn(1, del_nymex.index)    # Monday kept
+        self.assertAlmostEqual(del_nymex.loc[1], 10.0)
         self.assertIn(2, del_nymex.index)    # Tuesday kept
-        self.assertAlmostEqual(del_nymex.loc[2], -5.0) # Tuesday change is correct!
+        self.assertAlmostEqual(del_nymex.loc[2], -5.0)
 
     def test_2_7_corrupt_row_middle_check(self):
         # Insert a corrupt non-numeric value in nymex_rb in the middle of a valid DataFrame

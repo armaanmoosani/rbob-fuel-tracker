@@ -17,6 +17,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 import pytz
 import yfinance as yf
+import pandas as pd
 import concurrent.futures
 try:
     import pandas_market_calendars as mcal
@@ -32,6 +33,47 @@ GMAIL_USER           = os.environ['GMAIL_USER']
 GMAIL_APP_PASSWORD   = os.environ['GMAIL_APP_PASSWORD']
 TO_EMAIL             = [e.strip() for e in os.environ['TO_EMAIL'].split(',') if e.strip()]
 TO_PHONE_SMS         = [p.strip() for p in os.environ.get('PHONE_SMS_ADDRESS', os.environ['TO_EMAIL']).split(',') if p.strip()]
+
+import re
+
+def mask_recipient(address):
+    if not address:
+        return "None"
+    if isinstance(address, (list, tuple)):
+        return [mask_recipient(x) for x in address]
+    address = str(address)
+    if ',' in address:
+        return [mask_recipient(x.strip()) for x in address.split(',') if x.strip()]
+    if '@' in address:
+        parts = address.split('@')
+        name = parts[0]
+        domain = parts[1]
+        if len(name) <= 3:
+            masked_name = "***"
+        else:
+            masked_name = name[:2] + "***" + name[-1:]
+        return f"{masked_name}@{domain}"
+    else:
+        if len(address) <= 4:
+            return "***"
+        return address[:2] + "***" + address[-2:]
+
+def mask_sensitive_text(text):
+    if not text:
+        return ""
+    text = str(text)
+    sensitive_vals = []
+    for env_var in ['GMAIL_USER', 'GRAVES_EMAIL', 'TO_EMAIL', 'PHONE_SMS_ADDRESS']:
+        val = os.environ.get(env_var, '')
+        if val:
+            for item in val.split(','):
+                item_stripped = item.strip()
+                if item_stripped and len(item_stripped) > 2:
+                    sensitive_vals.append(item_stripped)
+    sensitive_vals = sorted(list(set(sensitive_vals)), key=len, reverse=True)
+    for val in sensitive_vals:
+        text = text.replace(val, mask_recipient(val))
+    return text
 
 GH_HEADERS = {
     "Authorization": f"token {GH_PAT}",
@@ -91,17 +133,15 @@ except Exception as e:
     }
 
 def get_session_start(dt):
-    import datetime
     if dt.hour >= 17:
         return dt.replace(hour=17, minute=0, second=0, microsecond=0)
     else:
-        prev_day = dt - datetime.timedelta(days=1)
+        prev_day = dt - timedelta(days=1)
         return prev_day.replace(hour=17, minute=0, second=0, microsecond=0)
 
 def get_session_date_str(dt):
-    import datetime
     if dt.hour >= 17:
-        return (dt + datetime.timedelta(days=1)).date().isoformat()
+        return (dt + timedelta(days=1)).date().isoformat()
     return dt.date().isoformat()
 
 DELIVERY_MONTH_CODES = {
@@ -1244,12 +1284,11 @@ def send_sms(all_data, now, alert_context):
         for phone in phones:
             sms_msg.replace_header('To', phone) if 'To' in sms_msg else sms_msg.add_header('To', phone)
             srv.sendmail(GMAIL_USER, phone, sms_msg.as_string())
-            masked_phone = (phone[:2] + "***" + phone[phone.find('@'):]) if '@' in phone else (phone[:2] + "***" + phone[-2:] if len(phone) > 4 else "***")
-            print(f"SMS sent to gateway ({masked_phone})")
+            print(f"SMS sent to gateway ({mask_recipient(phone)})")
             
         srv.quit()
     except Exception as e:
-        print(f"LOG_OUTBOUND_FAILURE: SMS send failed (non-fatal): {e}")
+        print(f"LOG_OUTBOUND_FAILURE: SMS send failed (non-fatal): {mask_sensitive_text(e)}")
 
 def send_email(subject, all_data, now, alert_context):
     try:
@@ -1285,11 +1324,11 @@ def send_email(subject, all_data, now, alert_context):
         for email_addr in emails:
             msg.replace_header('To', email_addr) if 'To' in msg else msg.add_header('To', email_addr)
             server.sendmail(GMAIL_USER, email_addr, msg.as_string())
-            print(f"Email sent: {subject} to {email_addr}")
+            print(f"Email sent: {subject} to {mask_recipient(email_addr)}")
             
         server.quit()
     except Exception as e:
-        print(f"LOG_OUTBOUND_FAILURE: Email send failed: {e}")
+        print(f"LOG_OUTBOUND_FAILURE: Email send failed: {mask_sensitive_text(e)}")
 
     send_sms(all_data, now, alert_context)
 
@@ -1339,15 +1378,14 @@ def send_daily_prompt(now):
         for phone in phones:
             sms_msg.replace_header('To', phone) if 'To' in sms_msg else sms_msg.add_header('To', phone)
             srv.sendmail(GMAIL_USER, phone, sms_msg.as_string())
-            masked_phone = (phone[:2] + "***" + phone[phone.find('@'):]) if '@' in phone else (phone[:2] + "***" + phone[-2:] if len(phone) > 4 else "***")
-            print(f"Daily prompt sent to {masked_phone}")
+            print(f"Daily prompt sent to {mask_recipient(phone)}")
             
         srv.quit()
         
         # Checkpoint successful send
         set_repo_variable(db_key, session_str)
     except Exception as e:
-        print(f"LOG_OUTBOUND_FAILURE: Failed to send daily prompt: {e}")
+        print(f"LOG_OUTBOUND_FAILURE: Failed to send daily prompt: {mask_sensitive_text(e)}")
 
 def main():
     start_time = datetime.now(timezone.utc)
@@ -1358,7 +1396,9 @@ def main():
         return
 
     access_token = None
-    if SCHWAB_APP_KEY and SCHWAB_APP_SECRET and SCHWAB_REFRESH_TOKEN:
+    if not (SCHWAB_APP_KEY and SCHWAB_APP_SECRET and SCHWAB_REFRESH_TOKEN):
+        print("Warning: Schwab API credentials (SCHWAB_APP_KEY, SCHWAB_APP_SECRET, or SCHWAB_REFRESH_TOKEN) are not configured. Bypassing Schwab and using Yahoo Finance fallback directly.")
+    else:
         auth_header = base64.b64encode(f"{SCHWAB_APP_KEY}:{SCHWAB_APP_SECRET}".encode()).decode()
         try:
             auth_res = requests.post(
@@ -1378,9 +1418,9 @@ def main():
                     update_github_secret(new_refresh)
                     print("Schwab refresh token rotated in GitHub Secrets")
                 except Exception as e:
-                    print(f"Warning: GitHub secret update failed: {e}")
+                    print(f"Warning: GitHub secret update failed: {mask_sensitive_text(e)}")
         except Exception as e:
-            print(f"Schwab OAuth refresh failed: {e}. Bypassing Schwab and forcing Yahoo Finance fallback.")
+            print(f"Schwab OAuth refresh failed: {mask_sensitive_text(e)}. Bypassing Schwab and forcing Yahoo Finance fallback.")
 
     all_data = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(COMMODITIES)) as executor:

@@ -25,6 +25,45 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 CSV_PATH = os.path.join(DATA_DIR, "graves_history.csv")
 DS_PATH = os.path.join(DATA_DIR, "daily_settlement.json")
 
+def mask_recipient(address):
+    if not address:
+        return "None"
+    if isinstance(address, (list, tuple)):
+        return [mask_recipient(x) for x in address]
+    address = str(address)
+    if ',' in address:
+        return [mask_recipient(x.strip()) for x in address.split(',') if x.strip()]
+    if '@' in address:
+        parts = address.split('@')
+        name = parts[0]
+        domain = parts[1]
+        if len(name) <= 3:
+            masked_name = "***"
+        else:
+            masked_name = name[:2] + "***" + name[-1:]
+        return f"{masked_name}@{domain}"
+    else:
+        if len(address) <= 4:
+            return "***"
+        return address[:2] + "***" + address[-2:]
+
+def mask_sensitive_text(text):
+    if not text:
+        return ""
+    text = str(text)
+    sensitive_vals = []
+    for env_var in ['GMAIL_USER', 'GRAVES_EMAIL', 'TO_EMAIL', 'PHONE_SMS_ADDRESS']:
+        val = os.environ.get(env_var, '')
+        if val:
+            for item in val.split(','):
+                item_stripped = item.strip()
+                if item_stripped and len(item_stripped) > 2:
+                    sensitive_vals.append(item_stripped)
+    sensitive_vals = sorted(list(set(sensitive_vals)), key=len, reverse=True)
+    for val in sensitive_vals:
+        text = text.replace(val, mask_recipient(val))
+    return text
+
 def send_alert_email(subject, body):
     if not GMAIL_USER or not GMAIL_APP_PASSWORD:
         print("Cannot send alert email: missing credentials.")
@@ -58,10 +97,9 @@ def send_alert_email(subject, body):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
             server.sendmail(GMAIL_USER, emails, msg.as_string())
-        masked_emails = [(e[:2] + "***" + e[e.find('@'):] if '@' in e else (e[:2] + "***" + e[-2:] if len(e) > 4 else "***")) for e in emails]
-        print(f"Alert email sent to {masked_emails}: {subject}")
+        print(f"Alert email sent to {mask_recipient(emails)}: {subject}")
     except Exception as e:
-        print(f"Failed to send alert email: {e}")
+        print(f"Failed to send alert email: {mask_sensitive_text(e)}")
 
 def git_pull_rebase():
     try:
@@ -73,13 +111,10 @@ def git_pull_rebase():
         sys.exit(1)
 
 def git_commit_push(message):
-    try:
-        subprocess.run(["git", "add", "data/graves_history.csv", "data/integrity_hashes.csv"], check=True)
-        subprocess.run(["git", "commit", "-m", message], check=True)
-        subprocess.run(["git", "push"], check=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Git commit/push failed: {e}")
-        sys.exit(1)
+    subprocess.run(["git", "add", "data/graves_history.csv", "data/integrity_hashes.csv"], check=True)
+    subprocess.run(["git", "commit", "-m", message], check=True)
+    subprocess.run(["git", "push"], check=True)
+    print("Git commit and push successful.")
 
 LABELS = {
     "rack_u": "E10 - UNLEADED",
@@ -98,6 +133,18 @@ def check_inbox_for_prices(target_date_str):
     if not GRAVES_EMAIL or not GRAVES_APP_PASSWORD:
         print("Missing GRAVES_EMAIL or GRAVES_APP_PASSWORD. Cannot check invoices.")
         return None, None
+
+    price_min = 1.50
+    price_max = 6.00
+    try:
+        config_path = os.path.join(DATA_DIR, "config.json")
+        if os.path.exists(config_path):
+            with open(config_path, "r") as f:
+                cfg = json.load(f)
+                price_min = cfg.get("PRICE_MIN", 1.50)
+                price_max = cfg.get("PRICE_MAX", 6.00)
+    except Exception as cfg_e:
+        print(f"Error loading price bounds config: {mask_sensitive_text(cfg_e)}")
         
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
@@ -147,19 +194,19 @@ def check_inbox_for_prices(target_date_str):
                 prices = []
                 for key, label in LABELS.items():
                     p = extract_price_near_label(body, label)
-                    if p is None or not (1.50 <= p <= 6.00):
+                    if p is None or not (price_min <= p <= price_max):
                         break
                     prices.append(p)
                     
                 if len(prices) == 3:
                     return local_date_str, tuple(prices)
             except Exception as loop_e:
-                print(f"Skipping badly formatted email {num}: {loop_e}")
+                print(f"Skipping badly formatted email {num}: {mask_sensitive_text(loop_e)}")
                 continue
 
         return None, None
     except Exception as e:
-        print(f"IMAP Error: {e}")
+        print(f"IMAP Error: {mask_sensitive_text(e)}")
         return None, None
 
 def read_daily_settlement(target_date_str):
@@ -320,7 +367,7 @@ def main():
             else:
                 print(f"Could not find matching date {date_str} in Yahoo Finance history.")
         except Exception as yf_e:
-            print(f"Yahoo Finance fallback failed: {yf_e}")
+            print(f"Yahoo Finance fallback failed: {mask_sensitive_text(yf_e)}")
             
     if not ds:
         print(f"Missing daily_settlement.json for {date_str} and Yahoo Finance fallback failed.")
@@ -330,15 +377,47 @@ def main():
     rb_stl = ds.get("rbob_settlement", "")
     ho_stl = ds.get("heating_oil_settlement", "")
 
-    # Write to CSV
-    git_pull_rebase()
-    
-    with open(CSV_PATH, "a") as f:
-        f.write(f"{date_str},{rb_stl},{ho_stl},{prices[0]:.4f},{prices[1]:.4f},{prices[2]:.4f}\n")
+    # Write to CSV using retry transaction loop
+    max_retries = 3
+    for attempt in range(max_retries):
+        print(f"Ingestion transaction attempt {attempt + 1}/{max_retries}...")
+        git_pull_rebase()
         
-    validate_data.validate_all(DATA_DIR)
-    git_commit_push(f"Ingest Graves Oil prices for {date_str}")
-    print("Successfully ingested.")
+        # Double check if date was already written by another concurrent run that succeeded
+        already_ingested = False
+        if os.path.exists(CSV_PATH):
+            with open(CSV_PATH, "r") as f:
+                for line in f:
+                    if line.startswith(date_str + ","):
+                        already_ingested = True
+                        break
+        if already_ingested:
+            print(f"Prices for {date_str} were already ingested by a concurrent run. Exiting silently.")
+            sys.exit(0)
+            
+        # Write to CSV
+        with open(CSV_PATH, "a") as f:
+            f.write(f"{date_str},{rb_stl},{ho_stl},{prices[0]:.4f},{prices[1]:.4f},{prices[2]:.4f}\n")
+            
+        try:
+            validate_data.validate_all(DATA_DIR)
+        except Exception as val_e:
+            print(f"Validation failed after write: {mask_sensitive_text(val_e)}")
+            subprocess.run(["git", "reset", "--hard", "origin/main"])
+            sys.exit(1)
+            
+        try:
+            git_commit_push(f"Ingest Graves Oil prices for {date_str}")
+            print("Successfully ingested.")
+            break
+        except Exception as push_e:
+            print(f"Push conflict or commit failed on attempt {attempt + 1}: {mask_sensitive_text(push_e)}")
+            subprocess.run(["git", "reset", "--hard", "origin/main"])
+            if attempt == max_retries - 1:
+                print("All retry attempts failed. Exiting.")
+                sys.exit(1)
+            import time
+            time.sleep(5)
     
     print("Triggering nightly backtester auto-tune...")
     try:
@@ -346,14 +425,14 @@ def main():
         if result.stdout:
             print(result.stdout)
     except subprocess.CalledProcessError as e:
-        print(f"Backtester crashed: {e}")
+        print(f"Backtester crashed: {mask_sensitive_text(e)}")
         if e.stdout:
-            print(f"Stdout:\n{e.stdout}")
+            print(f"Stdout:\n{mask_sensitive_text(e.stdout)}")
         if e.stderr:
-            print(f"Stderr:\n{e.stderr}")
+            print(f"Stderr:\n{mask_sensitive_text(e.stderr)}")
         send_alert_email(
             "CRITICAL: Nightly calibration commit failed",
-            f"The nightly backtester calibration failed to run or commit changes.\n\nError: {e}\n\nStderr:\n{e.stderr}\n\nPlease check GitHub Actions logs."
+            f"The nightly backtester calibration failed to run or commit changes.\n\nError: {mask_sensitive_text(e)}\n\nStderr:\n{mask_sensitive_text(e.stderr)}\n\nPlease check GitHub Actions logs."
         )
 
 if __name__ == "__main__":
