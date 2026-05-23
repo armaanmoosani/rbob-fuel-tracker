@@ -3,6 +3,7 @@ import sys
 import json
 import imaplib
 import email
+import email.utils
 import re
 import smtplib
 import subprocess
@@ -98,7 +99,6 @@ def check_inbox_for_prices(target_date_str):
                 msg = email.message_from_bytes(data[0][1])
                 
                 # Verify that the email belongs to the target date
-                import email.utils
                 email_date = email.utils.parsedate_to_datetime(msg.get('Date'))
                 if not email_date:
                     continue
