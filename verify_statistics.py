@@ -65,8 +65,12 @@ def run_simulation(df_slice, hike_thresh, drop_thresh, nymex_col, rack_col):
     - BUY_NOW (HIKE signal): buy at rack[T-1], rack goes up → saved = +delta_rack[T]
     - WAIT    (DROP signal): wait, rack goes down → saved = -delta_rack[T] (negative rack move = savings)
     """
-    delta_nymex = df_slice[nymex_col].diff() * 100
-    delta_rack  = df_slice[rack_col].diff() * 100   # same-night direction (CORRECTED)
+    if 'delta_nymex' in df_slice.columns and 'delta_rack' in df_slice.columns:
+        delta_nymex = df_slice['delta_nymex']
+        delta_rack  = df_slice['delta_rack']
+    else:
+        delta_nymex = df_slice[nymex_col].diff() * 100
+        delta_rack  = df_slice[rack_col].diff() * 100   # same-night direction (CORRECTED)
 
     savings = 0.0
     correct = 0
@@ -110,6 +114,8 @@ def main():
     holdout_days = 60
 
     df_clean = df.dropna(subset=['nymex_rb', 'rack_u']).copy().reset_index(drop=True)
+    df_clean['delta_nymex'] = df_clean['nymex_rb'].diff() * 100
+    df_clean['delta_rack'] = df_clean['rack_u'].diff() * 100
 
     if len(df_clean) <= holdout_days + 30:
         print("Warning: Insufficient data for 60-day holdout test. Skipping.")
@@ -134,8 +140,8 @@ def main():
         perm_savings    = []
         perm_precisions = []
 
-        test_delta_nymex = df_test['nymex_rb'].diff() * 100
-        test_delta_rack  = df_test['rack_u'].diff() * 100   # same-night (CORRECTED)
+        test_delta_nymex = df_test['delta_nymex']
+        test_delta_rack  = df_test['delta_rack']
 
         valid_mask   = ~(test_delta_nymex.isna() | test_delta_rack.isna())
         valid_nymex  = test_delta_nymex[valid_mask].values

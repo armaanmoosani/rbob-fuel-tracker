@@ -59,7 +59,12 @@ def get_clean_deltas(df, nymex_col, rack_col):
     Cleans and computes the daily price changes in cents.
     Applies Monday and roll-period filters.
     """
-    df_clean = df.dropna(subset=[nymex_col, rack_col]).copy()
+    if 'delta_nymex' not in df.columns or 'delta_rack' not in df.columns:
+        df = df.copy()
+        df['delta_nymex'] = df[nymex_col].diff() * 100
+        df['delta_rack'] = df[rack_col].diff() * 100
+
+    df_clean = df.dropna(subset=[nymex_col, rack_col, 'delta_nymex', 'delta_rack']).copy()
     
     if not pd.api.types.is_datetime64_any_dtype(df_clean.get('date', pd.Series(dtype='object'))):
         try:
@@ -75,11 +80,7 @@ def get_clean_deltas(df, nymex_col, rack_col):
     if 'date' in df_clean.columns and pd.api.types.is_datetime64_any_dtype(df_clean['date']):
         df_clean = df_clean[df_clean['date'].dt.day > 5]
 
-    delta_nymex = df_clean[nymex_col].diff() * 100
-    delta_rack  = df_clean[rack_col].diff() * 100
-
-    valid = ~(delta_nymex.isna() | delta_rack.isna())
-    return delta_nymex[valid], delta_rack[valid]
+    return df_clean['delta_nymex'], df_clean['delta_rack']
 
 def train_thresholds(delta_nymex, delta_rack, Hp, Dp):
     """
@@ -133,9 +134,9 @@ def simulate_walk_forward(df, nymex_col, rack_col, W, Hp, Dp):
         train_nymex, train_rack = get_clean_deltas(df_train, nymex_col, rack_col)
         hike_thresh, drop_thresh = train_thresholds(train_nymex, train_rack, Hp, Dp)
 
-        # Evaluate on out-of-sample test window
-        test_nymex = df_test[nymex_col].diff() * 100
-        test_rack = df_test[rack_col].diff() * 100
+        # Evaluate on out-of-sample test window using pre-computed deltas to avoid boundary loss
+        test_nymex = df_test['delta_nymex']
+        test_rack = df_test['delta_rack']
 
         savings = 0.0
         for i in range(len(df_test)):
@@ -158,6 +159,11 @@ def run_optimization(df, nymex_col, rack_col, prefix, cfg):
     using median out-of-sample savings, trains final thresholds,
     and returns metrics.
     """
+    # Pre-compute deltas on full history to prevent out-of-sample window boundary loss
+    df = df.copy()
+    df['delta_nymex'] = df[nymex_col].diff() * 100
+    df['delta_rack'] = df[rack_col].diff() * 100
+
     windows = [120, 180, 240]
     hike_percentiles = [15, 20]
     drop_percentiles = [80, 85]
