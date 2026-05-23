@@ -35,21 +35,27 @@ def main():
         print("No predictions logged yet.")
         return
 
-    # Backfill PENDING
+    # Backfill PENDING outcomes
+    # Direction note: prediction fires at 2:35 PM CT on pred_date (day T).
+    # At that time, the CURRENT effective rack price is rack[T-1] (last night's invoice).
+    # Tonight at 6 PM, Graves posts rack[T]; ingest_prices.py stores it at 11:30 PM with date = T.
+    # So the correct outcome = rack[T] - rack[T-1] = backward diff (tonight's new price vs last night's).
+    # This IS what curr_row[rack] - prev_row[rack] computes below — no bug.
     updates_made = False
     for idx, row in log_df.iterrows():
         if str(row['actual_next_day_move_cents']) == 'PENDING':
             pred_date = row['timestamp'].split('T')[0]
-            # Find pred_date in hist_df
+            # Find pred_date in hist_df (= day T, when prediction was made)
             hist_idx = hist_df.index[hist_df['date'] == pred_date].tolist()
             if hist_idx and hist_idx[0] - 1 >= 0:
                 prev_idx = hist_idx[0] - 1
-                curr_row = hist_df.iloc[hist_idx[0]]
-                prev_row = hist_df.iloc[prev_idx]
+                curr_row = hist_df.iloc[hist_idx[0]]   # rack[T] = tonight's new price
+                prev_row = hist_df.iloc[prev_idx]       # rack[T-1] = last night's price
                 
                 rack_col = 'rack_u' if row['commodity'] == 'RB' else 'rack_d'
                 
                 if pd.notna(curr_row[rack_col]) and pd.notna(prev_row[rack_col]):
+                    # rack[T] - rack[T-1]: positive = rack went up (hike was correct)
                     move = (curr_row[rack_col] - prev_row[rack_col]) * 100
                     log_df.at[idx, 'actual_next_day_move_cents'] = round(move, 2)
                     updates_made = True
@@ -239,6 +245,7 @@ def main():
         img.add_header('Content-ID', '<chart_img>')
         msg.attach(img)
         
+    # TO_EMAIL may be a comma-separated string (this script reads directly from env)
     emails = [e.strip() for e in email_to.split(',') if e.strip()]
     try:
         server = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)

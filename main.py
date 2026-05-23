@@ -762,6 +762,116 @@ def build_html_block(prefix, info, now):
     """
     return html, cid_intra, cid_5d
 
+def get_morning_confirmation_html(now):
+    try:
+        log_path = os.path.join(DATA_DIR, "prediction_log.csv")
+        hist_path = os.path.join(DATA_DIR, "graves_history.csv")
+        
+        if not os.path.exists(log_path) or not os.path.exists(hist_path):
+            return ""
+            
+        log_df = pd.read_csv(log_path)
+        hist_df = pd.read_csv(hist_path)
+        
+        if log_df.empty or hist_df.empty:
+            return ""
+            
+        # Parse dates
+        log_df['date_only'] = log_df['timestamp'].apply(lambda x: x.split('T')[0] if isinstance(x, str) else "")
+        log_df = log_df[log_df['date_only'] != ""]
+        
+        # We want the most recent date in the prediction log that has a completed/measurable outcome
+        unique_dates = sorted(log_df['date_only'].unique(), reverse=True)
+        
+        target_date = None
+        for d in unique_dates:
+            idx_list = hist_df.index[hist_df['date'] == d].tolist()
+            if idx_list and idx_list[0] - 1 >= 0:
+                target_date = d
+                break
+                
+        if not target_date:
+            return ""
+            
+        day_preds = log_df[log_df['date_only'] == target_date]
+        if day_preds.empty:
+            return ""
+            
+        rows_html = []
+        for _, pred_row in day_preds.iterrows():
+            comm = pred_row['commodity']
+            pred_dir = pred_row['predicted_direction']
+            
+            # Find the rack prices in graves_history
+            idx = hist_df.index[hist_df['date'] == target_date].tolist()[0]
+            curr_row = hist_df.iloc[idx]
+            prev_row = hist_df.iloc[idx - 1]
+            
+            comm_name = "UNLEADED" if comm == 'RB' else "DIESEL"
+            rack_col = 'rack_u' if comm == 'RB' else 'rack_d'
+            
+            curr_val = curr_row[rack_col]
+            prev_val = prev_row[rack_col]
+            
+            if pd.isna(curr_val) or pd.isna(prev_val):
+                continue
+                
+            move = (curr_val - prev_val) * 100  # in cents
+            move_str = f"{move:+.2f}¢/gal"
+            move_color = "#22c55e" if move > 0 else "#ef4444" if move < 0 else "#64748b"
+            
+            if pred_dir == "HIKE":
+                pred_desc = '<span style="color:#22c55e;font-weight:bold;">HIKE (BUY)</span>'
+                outcome = "✅ CORRECT" if move > 0 else "❌ INCORRECT"
+                outcome_color = "#22c55e" if move > 0 else "#ef4444"
+            elif pred_dir == "DROP":
+                pred_desc = '<span style="color:#38bdf8;font-weight:bold;">DROP (WAIT)</span>'
+                outcome = "✅ CORRECT" if move < 0 else "❌ INCORRECT"
+                outcome_color = "#22c55e" if move < 0 else "#ef4444"
+            else:
+                pred_desc = '<span style="color:#64748b;font-weight:bold;">FLAT (NO EDGE)</span>'
+                outcome = "N/A"
+                outcome_color = "#64748b"
+                
+            rows_html.append(f"""
+            <tr style="border-bottom:1px solid #f1f5f9;">
+              <td style="padding:8px 0;font-weight:700;color:#0f172a;">{comm_name}</td>
+              <td style="padding:8px 0;">{pred_desc}</td>
+              <td style="padding:8px 0;font-weight:600;color:{move_color};">{move_str}</td>
+              <td style="padding:8px 0;text-align:right;font-weight:bold;color:{outcome_color};">{outcome}</td>
+            </tr>
+            """)
+            
+        if not rows_html:
+            return ""
+            
+        target_dt = pd.to_datetime(target_date)
+        formatted_date = target_dt.strftime('%A, %b %-d')
+        
+        confirmation_html = f'''
+    <div style="padding:16px 22px;background:#ffffff;border-left:4px solid #10b981;border-right:1px solid #e2e8f0;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;margin-bottom:15px;border-radius:4px;">
+      <p style="margin:0 0 8px;font-size:10px;color:#10b981;text-transform:uppercase;letter-spacing:0.1em;font-weight:800;">
+        Overnight Verification Loop (Predictions from {formatted_date})
+      </p>
+      <table style="width:100%;border-collapse:collapse;font-size:12px;line-height:1.5;">
+        <thead>
+          <tr style="border-bottom:1px solid #cbd5e1;color:#64748b;text-align:left;">
+            <th style="padding-bottom:6px;font-weight:600;">Product</th>
+            <th style="padding-bottom:6px;font-weight:600;">Prediction</th>
+            <th style="padding-bottom:6px;font-weight:600;">Rack Change</th>
+            <th style="padding-bottom:6px;font-weight:600;text-align:right;">Outcome</th>
+          </tr>
+        </thead>
+        <tbody>
+          {"".join(rows_html)}
+        </tbody>
+      </table>
+    </div>'''
+        return confirmation_html
+    except Exception as e:
+        print(f"Warning: Failed to build morning confirmation HTML: {e}")
+        return ""
+
 def build_html_email(subject, all_data, now, alert_context):
     blocks = []
     cids = {}
@@ -818,6 +928,9 @@ def build_html_email(subject, all_data, now, alert_context):
         {alert_context['action']}
       </p>
     </div>'''
+
+    if alert_context.get('morning_confirmation_html'):
+        action_line += alert_context['morning_confirmation_html']
 
     crack_spread_html = ''
     if 'RB' in all_data and 'HO' in all_data and 'CL' in all_data:
@@ -1159,11 +1272,17 @@ def main():
         })
 
     if local_now.hour in [8, 12, 18]:
-        send_once_today(f"UPDATE_{local_now.strftime('%H')}", f"Market Update — {local_now.strftime('%-I %p')}", all_data, now, {
+        alert_ctx = {
             'label': f'Scheduled Market Update — {local_now.strftime("%-I:%M %p CT")}',
             'action': 'Periodic fuel market snapshot.',
             'action_color': '#475569'
-        })
+        }
+        if local_now.hour == 8:
+            confirm_html = get_morning_confirmation_html(now)
+            if confirm_html:
+                alert_ctx['morning_confirmation_html'] = confirm_html
+                
+        send_once_today(f"UPDATE_{local_now.strftime('%H')}", f"Market Update — {local_now.strftime('%-I %p')}", all_data, now, alert_ctx)
 
     print(f"Total time: {(datetime.now(timezone.utc) - start_time).total_seconds():.1f}s")
 

@@ -2,10 +2,11 @@ import os
 import sys
 import pandas as pd
 import numpy as np
+import hashlib
 
 def is_cme_holiday(dt):
     year, month, day = dt.year, dt.month, dt.day
-    dow = dt.dayofweek # 0 is Monday, 6 is Sunday
+    dow = dt.dayofweek if hasattr(dt, 'dayofweek') else dt.weekday() # 0 is Monday, 6 is Sunday
     
     # Good Friday dates (NYMEX holiday)
     good_fridays = {
@@ -202,6 +203,92 @@ def validate_prediction_log(log_path):
 
     print("Prediction log validation: PASSED")
 
+def validate_and_update_hashes(data_dir):
+    hash_csv_path = os.path.join(data_dir, "integrity_hashes.csv")
+    files_to_track = ["graves_history.csv", "config.json", "prediction_log.csv"]
+    
+    existing_records = []
+    if os.path.exists(hash_csv_path):
+        try:
+            df_hashes = pd.read_csv(hash_csv_path)
+            existing_records = df_hashes.to_dict('records')
+        except Exception as e:
+            print(f"Data validation failed: Failed to read integrity hashes CSV. Error: {e}")
+            sys.exit(1)
+            
+    new_records = []
+    
+    for fname in files_to_track:
+        file_path = os.path.join(data_dir, fname)
+        if not os.path.exists(file_path):
+            continue
+            
+        file_records = [r for r in existing_records if r['file_name'] == fname]
+        
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.read().splitlines()
+        except Exception as e:
+            print(f"Data validation failed: Failed to read {fname} for hashing. Error: {e}")
+            sys.exit(1)
+            
+        actual_line_count = len(lines)
+        
+        if not file_records:
+            # First time tracking this file
+            content_to_hash = "\n".join(lines)
+            sha256 = hashlib.sha256(content_to_hash.encode("utf-8")).hexdigest()
+            
+            new_records.append({
+                "timestamp": pd.Timestamp.now().isoformat(),
+                "file_name": fname,
+                "line_count": actual_line_count,
+                "sha256": sha256
+            })
+            print(f"Integrity hash initialized for {fname} (lines: {actual_line_count}, hash: {sha256[:8]}...)")
+        else:
+            latest_record = file_records[-1]
+            recorded_line_count = int(latest_record['line_count'])
+            recorded_sha256 = latest_record['sha256']
+            
+            if actual_line_count < recorded_line_count:
+                print(f"Data validation failed: File '{fname}' has been truncated. "
+                      f"Expected at least {recorded_line_count} lines, found {actual_line_count}.")
+                sys.exit(1)
+                
+            historical_lines = lines[:recorded_line_count]
+            content_to_hash = "\n".join(historical_lines)
+            computed_sha256 = hashlib.sha256(content_to_hash.encode("utf-8")).hexdigest()
+            
+            if computed_sha256 != recorded_sha256:
+                print(f"Data integrity violation: Historical content of '{fname}' has been modified! "
+                      f"Recorded hash: {recorded_sha256}, Computed hash: {computed_sha256}.")
+                sys.exit(1)
+                
+            if actual_line_count > recorded_line_count:
+                full_content = "\n".join(lines)
+                full_sha256 = hashlib.sha256(full_content.encode("utf-8")).hexdigest()
+                
+                new_records.append({
+                    "timestamp": pd.Timestamp.now().isoformat(),
+                    "file_name": fname,
+                    "line_count": actual_line_count,
+                    "sha256": full_sha256
+                })
+                print(f"Integrity hash updated for {fname} (lines: {recorded_line_count} -> {actual_line_count})")
+                
+    if new_records:
+        df_new = pd.DataFrame(new_records)
+        if os.path.exists(hash_csv_path):
+            df_existing = pd.read_csv(hash_csv_path)
+            df_new = df_new[df_existing.columns]
+            df_new.to_csv(hash_csv_path, mode='a', header=False, index=False)
+        else:
+            cols = ["timestamp", "file_name", "line_count", "sha256"]
+            df_new = df_new[cols]
+            df_new.to_csv(hash_csv_path, index=False)
+        print("Integrity hashes written to registry.")
+
 def validate_all(data_dir=None):
     if data_dir is None:
         data_dir = os.path.join(os.path.dirname(__file__), "data")
@@ -210,6 +297,7 @@ def validate_all(data_dir=None):
     
     validate_graves_history(csv_path)
     validate_prediction_log(log_path)
+    validate_and_update_hashes(data_dir)
 
 if __name__ == "__main__":
     validate_all()

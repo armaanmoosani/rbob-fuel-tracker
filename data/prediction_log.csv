@@ -1,0 +1,3 @@
+timestamp,commodity,predicted_direction,nymex_move_cents,lag_used,window_used,threshold_used,actual_next_day_move_cents
+2026-05-21T14:35:00-05:00,RB,DROP,-10.78,0,120,-0.76,-9.93
+2026-05-21T14:35:00-05:00,HO,DROP,-11.55,0,120,-2.48,-12.09

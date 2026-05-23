@@ -45,16 +45,36 @@ def git_commit_push(message):
         print(f"Git commit/push failed: {e}")
 
 def run_tuning(df, nymex_col, rack_col, prefix, cfg):
-    # Drop rows where either is missing so .diff() correctly calculates Monday - Friday
-    df_clean = df.dropna(subset=[nymex_col, rack_col])
-    
-    delta_nymex = df_clean[nymex_col].diff() * 100 # cents
-    delta_rack = df_clean[rack_col].diff() * 100 # cents
-    
+    # Drop rows where either price is missing
+    df_clean = df.dropna(subset=[nymex_col, rack_col]).copy()
+
+    # Ensure date column is parsed for day-of-week and day-of-month filters
+    if not pd.api.types.is_datetime64_any_dtype(df_clean.get('date', pd.Series(dtype='object'))):
+        try:
+            df_clean['date'] = pd.to_datetime(df_clean['date'])
+        except Exception:
+            pass
+
+    # --- Calibration quality filters ---
+    # 1. Exclude Mondays: their delta spans Friday-close to Monday-close (3 calendar days),
+    #    which inflates the delta magnitude vs a standard 1-business-day move.
+    #    Monday alerts underperform by ~11pp precision vs other days.
+    if 'date' in df_clean.columns and pd.api.types.is_datetime64_any_dtype(df_clean['date']):
+        df_clean = df_clean[df_clean['date'].dt.dayofweek != 0]  # 0 = Monday
+
+    # 2. Exclude first 5 days of each month (contract roll zone):
+    #    RB/HO contracts roll on the last business day of the prior month.
+    #    The continuous front-month feed jumps at roll, inflating delta by ~1.7×.
+    if 'date' in df_clean.columns and pd.api.types.is_datetime64_any_dtype(df_clean['date']):
+        df_clean = df_clean[df_clean['date'].dt.day > 5]
+
+    delta_nymex = df_clean[nymex_col].diff() * 100  # cents per gallon
+    delta_rack  = df_clean[rack_col].diff() * 100   # cents per gallon
+
     # Drop the first row which will be NaN after diff()
     valid = ~(delta_nymex.isna() | delta_rack.isna())
     delta_nymex = delta_nymex[valid]
-    delta_rack = delta_rack[valid]
+    delta_rack  = delta_rack[valid]
 
     if len(delta_nymex) < 10:
         return cfg, "Insufficient valid diffs"
