@@ -214,7 +214,40 @@ def main():
     # Get settlement data
     ds = read_daily_settlement(date_str)
     if not ds:
-        print(f"Missing daily_settlement.json for {date_str}.")
+        print(f"daily_settlement.json missing or stale for {date_str}. Attempting Yahoo Finance fallback...")
+        try:
+            import yfinance as yf
+            rb_ticker = yf.Ticker("RB=F")
+            ho_ticker = yf.Ticker("HO=F")
+            rb_hist = rb_ticker.history(period="5d")
+            ho_hist = ho_ticker.history(period="5d")
+            
+            rb_val = None
+            ho_val = None
+            for dt, row in rb_hist.iterrows():
+                if dt.strftime("%Y-%m-%d") == date_str:
+                    rb_val = round(float(row['Close']), 4)
+                    break
+            for dt, row in ho_hist.iterrows():
+                if dt.strftime("%Y-%m-%d") == date_str:
+                    ho_val = round(float(row['Close']), 4)
+                    break
+                    
+            if rb_val is not None and ho_val is not None:
+                ds = {
+                    "date": date_str,
+                    "rbob_settlement": rb_val,
+                    "heating_oil_settlement": ho_val,
+                    "source": "yfinance_fallback"
+                }
+                print(f"Yahoo Finance fallback success: RB={rb_val}, HO={ho_val}")
+            else:
+                print(f"Could not find matching date {date_str} in Yahoo Finance history.")
+        except Exception as yf_e:
+            print(f"Yahoo Finance fallback failed: {yf_e}")
+            
+    if not ds:
+        print(f"Missing daily_settlement.json for {date_str} and Yahoo Finance fallback failed.")
         send_alert_email("Fuel Tracker Error", f"Prices received, but missing 1:30 PM NYMEX settlement for {date_str}.")
         sys.exit(1)
         
