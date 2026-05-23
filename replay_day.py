@@ -3,11 +3,10 @@ import sys
 import argparse
 import pandas as pd
 import numpy as np
-from scipy import stats
 
 # Ensure parent directory is in path
 sys.path.append(os.path.dirname(__file__))
-from backtest import find_best_lag_and_window, run_tuning
+import backtest
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 CSV_PATH = os.path.join(DATA_DIR, "graves_history.csv")
@@ -26,41 +25,30 @@ def simulate_thresholds_at_date(df, target_date):
         "RB_DROP_THRESHOLD_CENTS": -1.0,
         "HO_HIKE_THRESHOLD_CENTS": 1.0,
         "HO_DROP_THRESHOLD_CENTS": -1.0,
+        "RB_LEAN_HIKE_CENTS": 0.5,
+        "RB_LEAN_DROP_CENTS": -0.5,
+        "HO_LEAN_HIKE_CENTS": 0.5,
+        "HO_LEAN_DROP_CENTS": -0.5,
         "LAG_DAYS": 0,
         "ROLLING_WINDOW_DAYS": 120
     }
     
     df_sorted = df.sort_values('date').reset_index(drop=True)
     # The night before target_date is the last day we include in calibration
-    dates_before = df_sorted[df_sorted['date'] < target_date]['date'].unique()
+    df_slice = df_sorted[df_sorted['date'] < target_date].copy()
     
     min_rows = cfg["MIN_ROWS_FOR_TUNING"]
-    if len(dates_before) < min_rows:
+    if len(df_slice) < min_rows:
         return cfg
         
-    print(f"Running walk-forward threshold calibration across {len(dates_before)} historical days...")
+    print(f"Running new walk-forward threshold calibration on data up to {target_date}...")
     
-    for idx, d in enumerate(dates_before):
-        if idx < min_rows:
-            continue
-            
-        df_slice = df_sorted[df_sorted['date'] <= d].copy()
-        
-        # Re-run lag and window search
-        best_lag, best_window = find_best_lag_and_window(df_slice)
-        cfg["LAG_DAYS"] = best_lag
-        cfg["ROLLING_WINDOW_DAYS"] = best_window if best_window else 0
-        
-        if best_window:
-            df_slice = df_slice.tail(best_window).copy()
-            
-        if best_lag > 0:
-            df_slice['nymex_rb'] = df_slice['nymex_rb'].shift(best_lag)
-            df_slice['nymex_ho'] = df_slice['nymex_ho'].shift(best_lag)
-            
-        cfg, _ = run_tuning(df_slice, 'nymex_rb', 'rack_u', 'RB', cfg)
-        cfg, _ = run_tuning(df_slice, 'nymex_ho', 'rack_d', 'HO', cfg)
-        
+    # Run optimization separately for RB and HO
+    cfg, _, rb_win = backtest.run_optimization(df_slice, 'nymex_rb', 'rack_u', 'RB', cfg)
+    cfg, _, ho_win = backtest.run_optimization(df_slice, 'nymex_ho', 'rack_d', 'HO', cfg)
+    
+    cfg["ROLLING_WINDOW_DAYS"] = rb_win
+    cfg["LAG_DAYS"] = 0
     return cfg
 
 def main():

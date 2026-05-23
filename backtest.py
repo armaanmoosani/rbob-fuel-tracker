@@ -7,7 +7,6 @@ import numpy as np
 from scipy import stats
 import validate_data
 
-
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 CSV_PATH = os.path.join(DATA_DIR, "graves_history.csv")
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
@@ -23,6 +22,10 @@ def load_config():
         "RB_DROP_THRESHOLD_CENTS": -1.0,
         "HO_HIKE_THRESHOLD_CENTS": 1.0,
         "HO_DROP_THRESHOLD_CENTS": -1.0,
+        "RB_LEAN_HIKE_CENTS": 0.5,
+        "RB_LEAN_DROP_CENTS": -0.5,
+        "HO_LEAN_HIKE_CENTS": 0.5,
+        "HO_LEAN_DROP_CENTS": -0.5,
         "LAG_DAYS": 0,
         "ROLLING_WINDOW_DAYS": 120
     }
@@ -36,138 +39,249 @@ def clamp(val, min_val, max_val):
 
 def git_commit_push(message):
     try:
+        subprocess.run(["git", "--version"], capture_output=True, check=True)
         subprocess.run(["git", "config", "--global", "user.name", "github-actions[bot]"], check=True)
         subprocess.run(["git", "config", "--global", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
         subprocess.run(["git", "add", "data/config.json"], check=True)
-        subprocess.run(["git", "commit", "-m", message], check=True)
-        subprocess.run(["git", "push"], check=True)
-    except subprocess.CalledProcessError as e:
+        # Check if there are changes before committing
+        status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True)
+        if status.stdout.strip():
+            subprocess.run(["git", "commit", "-m", message], check=True)
+            subprocess.run(["git", "push"], check=True)
+            print("Successfully committed and pushed config changes.")
+        else:
+            print("No config changes to commit.")
+    except Exception as e:
         print(f"Git commit/push failed: {e}")
 
-def run_tuning(df, nymex_col, rack_col, prefix, cfg):
-    # Drop rows where either price is missing
+def get_clean_deltas(df, nymex_col, rack_col):
+    """
+    Cleans and computes the daily price changes in cents.
+    Applies Monday and roll-period filters.
+    """
     df_clean = df.dropna(subset=[nymex_col, rack_col]).copy()
-
-    # Ensure date column is parsed for day-of-week and day-of-month filters
+    
     if not pd.api.types.is_datetime64_any_dtype(df_clean.get('date', pd.Series(dtype='object'))):
         try:
             df_clean['date'] = pd.to_datetime(df_clean['date'])
         except Exception:
             pass
 
-    # --- Calibration quality filters ---
-    # 1. Exclude Mondays: their delta spans Friday-close to Monday-close (3 calendar days),
-    #    which inflates the delta magnitude vs a standard 1-business-day move.
-    #    Monday alerts underperform by ~11pp precision vs other days.
+    # Exclude Mondays: spans 3 calendar days (high variance noise)
     if 'date' in df_clean.columns and pd.api.types.is_datetime64_any_dtype(df_clean['date']):
-        df_clean = df_clean[df_clean['date'].dt.dayofweek != 0]  # 0 = Monday
+        df_clean = df_clean[df_clean['date'].dt.dayofweek != 0]
 
-    # 2. Exclude first 5 days of each month (contract roll zone):
-    #    RB/HO contracts roll on the last business day of the prior month.
-    #    The continuous front-month feed jumps at roll, inflating delta by ~1.7×.
+    # Exclude first 5 days of each month (contract roll zone)
     if 'date' in df_clean.columns and pd.api.types.is_datetime64_any_dtype(df_clean['date']):
         df_clean = df_clean[df_clean['date'].dt.day > 5]
 
-    delta_nymex = df_clean[nymex_col].diff() * 100  # cents per gallon
-    delta_rack  = df_clean[rack_col].diff() * 100   # cents per gallon
+    delta_nymex = df_clean[nymex_col].diff() * 100
+    delta_rack  = df_clean[rack_col].diff() * 100
 
-    # Drop the first row which will be NaN after diff()
     valid = ~(delta_nymex.isna() | delta_rack.isna())
-    delta_nymex = delta_nymex[valid]
-    delta_rack  = delta_rack[valid]
+    return delta_nymex[valid], delta_rack[valid]
 
+def train_thresholds(delta_nymex, delta_rack, Hp, Dp):
+    """
+    Train thresholds on cleaned daily price changes.
+    """
     if len(delta_nymex) < 10:
-        return cfg, "Insufficient valid diffs"
+        return 1.0, -1.0
 
-    slope, intercept, r_value, p_value, std_err = stats.linregress(delta_nymex, delta_rack)
-    if p_value > 0.10:
-        return cfg, f"p={p_value:.3f} > 0.10"
-
-    # Empirical threshold: 15th percentile of NYMEX moves that triggered a Rack move
     hike_mask = (delta_rack > 0) & (delta_nymex > 0)
     drop_mask = (delta_rack < 0) & (delta_nymex < 0)
 
+    hike_thresh = 1.0
     if hike_mask.sum() >= 5:
-        raw_hike = np.percentile(delta_nymex[hike_mask], 15)
-        clamped_hike = clamp(raw_hike, 0.3, 3.0)
-        old_hike = cfg.get(f"{prefix}_HIKE_THRESHOLD_CENTS", 1.0)
-        cfg[f"{prefix}_HIKE_THRESHOLD_CENTS"] = round(cfg["BLEND_ALPHA"] * clamped_hike + (1 - cfg["BLEND_ALPHA"]) * old_hike, 2)
-        
+        raw_hike = np.percentile(delta_nymex[hike_mask], Hp)
+        hike_thresh = clamp(raw_hike, 0.3, 3.0)
+
+    drop_thresh = -1.0
     if drop_mask.sum() >= 5:
-        raw_drop = np.percentile(delta_nymex[drop_mask], 85) # 85th percentile of negative drops (e.g. closer to zero)
-        clamped_drop = clamp(raw_drop, -3.0, -0.3)
-        old_drop = cfg.get(f"{prefix}_DROP_THRESHOLD_CENTS", -1.0)
-        cfg[f"{prefix}_DROP_THRESHOLD_CENTS"] = round(cfg["BLEND_ALPHA"] * clamped_drop + (1 - cfg["BLEND_ALPHA"]) * old_drop, 2)
+        raw_drop = np.percentile(delta_nymex[drop_mask], Dp)
+        drop_thresh = clamp(raw_drop, -3.0, -0.3)
 
-    return cfg, f"R2={r_value**2:.2f}, p={p_value:.3f}, pass_thru={slope:.2f}"
+    return hike_thresh, drop_thresh
 
-def find_best_lag_and_window(df):
-    windows = [90, 120, 180, 240, 365, None] # None means all historical data
-    correlations = {}
-    
-    for window in windows:
-        if window is not None and len(df) < window:
-            continue
-            
-        df_sliced = df.tail(window) if window else df
-        
-        # Physical transmission lag is always 0 in daily fuel rack price setting.
-        # Scanning non-zero lags on small rolling windows causes overfitting/spurious correlations.
-        lag = 0
-        nymex = df_sliced['nymex_rb'].diff().shift(lag)
-        rack = df_sliced['rack_u'].diff()
-        
-        valid = ~(nymex.isna() | rack.isna())
-        if valid.sum() < 20:
-            continue
-            
-        slope, intercept, r_value, p_value, std_err = stats.linregress(nymex[valid], rack[valid])
-        correlations[(lag, window)] = r_value**2
+def simulate_walk_forward(df, nymex_col, rack_col, W, Hp, Dp):
+    """
+    Simulates walk-forward out-of-sample testing on 3 folds.
+    Returns the median savings across all folds.
+    """
+    # 3 folds, 90-day test window each
+    folds = 3
+    test_size = 90
+    total_needed = test_size * folds
+    if len(df) < total_needed + W:
+        return -9999.0
 
-    if not correlations:
-        return 0, None
+    fold_savings = []
+
+    for f in range(folds):
+        # N = length of dataset
+        N = len(df)
+        # test window starts at N - (f+1)*90, ends at N - f*90
+        test_start = N - (f + 1) * test_size
+        test_end = N - f * test_size if f > 0 else N
         
-    best_lag, best_window = max(correlations, key=correlations.get)
-    return best_lag, best_window
+        train_start = max(0, test_start - W)
+        
+        df_train = df.iloc[train_start:test_start]
+        df_test = df.iloc[test_start:test_end]
+
+        # Clean and get training deltas
+        train_nymex, train_rack = get_clean_deltas(df_train, nymex_col, rack_col)
+        hike_thresh, drop_thresh = train_thresholds(train_nymex, train_rack, Hp, Dp)
+
+        # Evaluate on out-of-sample test window
+        test_nymex = df_test[nymex_col].diff() * 100
+        test_rack = df_test[rack_col].diff() * 100
+
+        savings = 0.0
+        for i in range(len(df_test)):
+            ch = test_nymex.iloc[i]
+            act = test_rack.iloc[i]
+            if pd.isna(ch) or pd.isna(act):
+                continue
+            if ch >= hike_thresh:
+                savings += act
+            elif ch <= drop_thresh:
+                savings += -act
+        
+        fold_savings.append(savings)
+
+    return np.median(fold_savings)
+
+def run_optimization(df, nymex_col, rack_col, prefix, cfg):
+    """
+    Runs grid search over window and percentiles, finds the best parameters
+    using median out-of-sample savings, trains final thresholds,
+    and returns metrics.
+    """
+    windows = [120, 180, 240]
+    hike_percentiles = [15, 20]
+    drop_percentiles = [80, 85]
+
+    best_median_savings = -9999.0
+    best_params = None
+
+    # Sweep grid
+    for W in windows:
+        for Hp in hike_percentiles:
+            for Dp in drop_percentiles:
+                med_sav = simulate_walk_forward(df, nymex_col, rack_col, W, Hp, Dp)
+                if med_sav > best_median_savings:
+                    best_median_savings = med_sav
+                    best_params = (W, Hp, Dp)
+                elif med_sav == best_median_savings and best_params is not None:
+                    # Tie breaker: choose larger window for stability
+                    if W > best_params[0]:
+                        best_params = (W, Hp, Dp)
+
+    if best_params is None:
+        best_params = (120, 15, 85) # default fallback
+
+    opt_W, opt_Hp, opt_Dp = best_params
+    print(f"[{prefix}] Optimal Parameters: Win={opt_W}, HikePct={opt_Hp}, DropPct={opt_Dp} | Med. OOS Savings={best_median_savings:+.2f}c")
+
+    # Train final thresholds on the last opt_W days of history
+    df_final_train = df.tail(opt_W)
+    final_nymex, final_rack = get_clean_deltas(df_final_train, nymex_col, rack_col)
+    raw_hike, raw_drop = train_thresholds(final_nymex, final_rack, opt_Hp, opt_Dp)
+
+    # Smooth the thresholds against config
+    old_hike = cfg.get(f"{prefix}_HIKE_THRESHOLD_CENTS", 1.0)
+    old_drop = cfg.get(f"{prefix}_DROP_THRESHOLD_CENTS", -1.0)
+    alpha = cfg.get("BLEND_ALPHA", 0.3)
+
+    smoothed_hike = round(alpha * raw_hike + (1 - alpha) * old_hike, 2)
+    smoothed_drop = round(alpha * raw_drop + (1 - alpha) * old_drop, 2)
+
+    cfg[f"{prefix}_HIKE_THRESHOLD_CENTS"] = smoothed_hike
+    cfg[f"{prefix}_DROP_THRESHOLD_CENTS"] = smoothed_drop
+
+    # Calculate additional metrics on the final training set
+    df_slice = df.tail(opt_W).copy()
+    slice_nymex = df_slice[nymex_col].diff() * 100
+    slice_rack = df_slice[rack_col].diff() * 100
+
+    valid_mask = ~(slice_nymex.isna() | slice_rack.isna())
+    valid_nymex = slice_nymex[valid_mask]
+    valid_rack = slice_rack[valid_mask]
+
+    # 1. NYMEX daily volatility (cents)
+    nymex_std = float(valid_nymex.std()) if len(valid_nymex) > 1 else 1.0
+
+    # 2. Performance metrics over the window using final smoothed thresholds
+    alerts = 0
+    correct = 0
+    savings_list = []
+
+    for ch, act in zip(valid_nymex, valid_rack):
+        if ch >= smoothed_hike:
+            alerts += 1
+            savings_list.append(act)
+            if act > 0:
+                correct += 1
+        elif ch <= smoothed_drop:
+            alerts += 1
+            savings_list.append(-act)
+            if act < 0:
+                correct += 1
+
+    win_rate = float(correct / alerts) if alerts > 0 else 0.70 # baseline fallback
+    avg_savings = float(np.mean(savings_list)) if alerts > 0 else 0.0
+
+    # 3. 95% CVaR for Price Hikes (Waiting risk)
+    # The risk of waiting is when the price jumps.
+    # Take the average of all positive delta_rack moves in the worst 5% of cases (the largest hikes).
+    rack_hikes = valid_rack.values
+    if len(rack_hikes) >= 10:
+        cvar_threshold = np.percentile(rack_hikes, 95)
+        cvar_val = float(np.mean(rack_hikes[rack_hikes >= cvar_threshold]))
+    else:
+        cvar_val = 3.0 # default fallback
+
+    # Save metrics to config
+    cfg[f"{prefix}_nymex_daily_std"] = round(nymex_std, 4)
+    cfg[f"{prefix}_historical_win_rate"] = round(win_rate, 4)
+    cfg[f"{prefix}_historical_cvar"] = round(cvar_val, 4)
+    cfg[f"{prefix}_average_savings"] = round(avg_savings, 4)
+    cfg[f"{prefix}_window_days"] = opt_W
+
+    msg = f"Hike={smoothed_hike}c, Drop={smoothed_drop}c, Vol={nymex_std:.2f}c, CVaR={cvar_val:.2f}c"
+    return cfg, msg, opt_W
 
 def main():
-    print("Starting backtest engine...")
+    print("Starting walk-forward backtest engine...")
     validate_data.validate_all(DATA_DIR)
     cfg = load_config()
-    
+
     if not os.path.exists(CSV_PATH):
         print("No CSV data found. Exiting.")
         sys.exit(0)
-        
+
     df = pd.read_csv(CSV_PATH)
-    
+    df['date'] = pd.to_datetime(df['date'])
+    df = df.sort_values('date').reset_index(drop=True)
+
     min_rows = cfg.get("MIN_ROWS_FOR_TUNING", 30)
     if len(df) < min_rows:
         print(f"Insufficient data. Have {len(df)} rows, need {min_rows}. Exiting.")
         sys.exit(0)
 
-    # Find best lag and best rolling window
-    best_lag, best_window = find_best_lag_and_window(df)
-    cfg["LAG_DAYS"] = best_lag
-    cfg["ROLLING_WINDOW_DAYS"] = best_window if best_window else 0
-    print(f"Optimal Lag: {best_lag} days | Optimal Window: {best_window if best_window else 'ALL'} days")
+    # Walk-forward optimization separately for RB and HO
+    cfg, msg_rb, rb_win = run_optimization(df, 'nymex_rb', 'rack_u', 'RB', cfg)
+    cfg, msg_ho, ho_win = run_optimization(df, 'nymex_ho', 'rack_d', 'HO', cfg)
 
-    # Slice the dataframe to the optimal rolling window before tuning the thresholds
-    if best_window:
-        df = df.tail(best_window).copy()
-
-    # If lag is > 0, we shift the nymex columns for the threshold tuning so the deltas align!
-    if best_lag > 0:
-        df['nymex_rb'] = df['nymex_rb'].shift(best_lag)
-        df['nymex_ho'] = df['nymex_ho'].shift(best_lag)
-
-    cfg, msg_rb = run_tuning(df, 'nymex_rb', 'rack_u', 'RB', cfg)
-    cfg, msg_ho = run_tuning(df, 'nymex_ho', 'rack_d', 'HO', cfg)
+    # For logging compatibility, store the RB window as ROLLING_WINDOW_DAYS
+    cfg["ROLLING_WINDOW_DAYS"] = rb_win
+    cfg["LAG_DAYS"] = 0 # lag is physically zero
 
     save_config(cfg)
-    
+
     local_now = pd.Timestamp.now(tz='America/Chicago')
-    commit_msg = f"Auto-tune [{local_now.strftime('%Y-%m-%d')}]: Lag={best_lag}, Win={best_window if best_window else 'ALL'}. RB({msg_rb}) HO({msg_ho})"
+    commit_msg = f"Auto-tune [{local_now.strftime('%Y-%m-%d')}]: Walk-Forward. RB({msg_rb}) HO({msg_ho})"
     print(commit_msg)
     git_commit_push(commit_msg)
 

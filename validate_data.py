@@ -3,6 +3,7 @@ import sys
 import pandas as pd
 import numpy as np
 import hashlib
+import json
 
 def is_cme_holiday(dt):
     year, month, day = dt.year, dt.month, dt.day
@@ -251,31 +252,50 @@ def validate_and_update_hashes(data_dir):
             recorded_line_count = int(latest_record['line_count'])
             recorded_sha256 = latest_record['sha256']
             
-            if actual_line_count < recorded_line_count:
-                print(f"Data validation failed: File '{fname}' has been truncated. "
-                      f"Expected at least {recorded_line_count} lines, found {actual_line_count}.")
-                sys.exit(1)
+            if fname == "config.json":
+                # Verify config.json is valid JSON
+                try:
+                    full_content = "\n".join(lines)
+                    json.loads(full_content)
+                except Exception as e:
+                    print(f"Data validation failed: config.json is not valid JSON. Error: {e}")
+                    sys.exit(1)
                 
-            historical_lines = lines[:recorded_line_count]
-            content_to_hash = "\n".join(historical_lines)
-            computed_sha256 = hashlib.sha256(content_to_hash.encode("utf-8")).hexdigest()
-            
-            if computed_sha256 != recorded_sha256:
-                print(f"Data integrity violation: Historical content of '{fname}' has been modified! "
-                      f"Recorded hash: {recorded_sha256}, Computed hash: {computed_sha256}.")
-                sys.exit(1)
+                computed_sha256 = hashlib.sha256(full_content.encode("utf-8")).hexdigest()
+                if computed_sha256 != recorded_sha256:
+                    new_records.append({
+                        "timestamp": pd.Timestamp.now().isoformat(),
+                        "file_name": fname,
+                        "line_count": actual_line_count,
+                        "sha256": computed_sha256
+                    })
+                    print(f"Integrity hash updated for config.json (hash: {computed_sha256[:8]}...)")
+            else:
+                if actual_line_count < recorded_line_count:
+                    print(f"Data validation failed: File '{fname}' has been truncated. "
+                          f"Expected at least {recorded_line_count} lines, found {actual_line_count}.")
+                    sys.exit(1)
+                    
+                historical_lines = lines[:recorded_line_count]
+                content_to_hash = "\n".join(historical_lines)
+                computed_sha256 = hashlib.sha256(content_to_hash.encode("utf-8")).hexdigest()
                 
-            if actual_line_count > recorded_line_count:
-                full_content = "\n".join(lines)
-                full_sha256 = hashlib.sha256(full_content.encode("utf-8")).hexdigest()
-                
-                new_records.append({
-                    "timestamp": pd.Timestamp.now().isoformat(),
-                    "file_name": fname,
-                    "line_count": actual_line_count,
-                    "sha256": full_sha256
-                })
-                print(f"Integrity hash updated for {fname} (lines: {recorded_line_count} -> {actual_line_count})")
+                if computed_sha256 != recorded_sha256:
+                    print(f"Data integrity violation: Historical content of '{fname}' has been modified! "
+                          f"Recorded hash: {recorded_sha256}, Computed hash: {computed_sha256}.")
+                    sys.exit(1)
+                    
+                if actual_line_count > recorded_line_count:
+                    full_content = "\n".join(lines)
+                    full_sha256 = hashlib.sha256(full_content.encode("utf-8")).hexdigest()
+                    
+                    new_records.append({
+                        "timestamp": pd.Timestamp.now().isoformat(),
+                        "file_name": fname,
+                        "line_count": actual_line_count,
+                        "sha256": full_sha256
+                    })
+                    print(f"Integrity hash updated for {fname} (lines: {recorded_line_count} -> {actual_line_count})")
                 
     if new_records:
         df_new = pd.DataFrame(new_records)

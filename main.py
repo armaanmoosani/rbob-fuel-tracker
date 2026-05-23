@@ -409,11 +409,22 @@ def build_rack_signal(prefix, data, now):
     change_cents = (signal_price - yest) * 100
     name = COMMODITIES[prefix]['name']
 
-    # Load dynamic thresholds from config
+    # Load dynamic thresholds and stats from config
     hike_thresh = APP_CONFIG.get(f"{prefix}_HIKE_THRESHOLD_CENTS", 1.0)
     drop_thresh = APP_CONFIG.get(f"{prefix}_DROP_THRESHOLD_CENTS", -1.0)
     lean_hike = APP_CONFIG.get(f"{prefix}_LEAN_HIKE_CENTS", 0.5)
     lean_drop = APP_CONFIG.get(f"{prefix}_LEAN_DROP_CENTS", -0.5)
+    
+    nymex_daily_std = APP_CONFIG.get(f"{prefix}_nymex_daily_std", 1.0)
+    z_score = change_cents / nymex_daily_std if nymex_daily_std > 0 else 0.0
+    abs_z = abs(z_score)
+    
+    if abs_z >= 1.5:
+        conviction = "High Conviction"
+    elif abs_z >= 1.0:
+        conviction = "Moderate Conviction"
+    else:
+        conviction = "Low Conviction"
 
     if change_cents >= hike_thresh:
         action = "BUY_NOW"
@@ -440,6 +451,16 @@ def build_rack_signal(prefix, data, now):
         label = "No clear edge"
         color = "#64748b"
         instruction = "Do not let this futures move alone drive the truck decision."
+
+    # Build quantitative risk context text
+    risk_text = ""
+    if "BUY" in action:
+        win_rate = APP_CONFIG.get(f"{prefix}_historical_win_rate", 0.70) * 100
+        avg_savings = APP_CONFIG.get(f"{prefix}_average_savings", 0.0)
+        risk_text = f"Conviction Note: In history, similar positive signals led to an actual rack price hike {win_rate:.0f}% of the time, with an average savings of {avg_savings:.2f}¢/gal."
+    elif "WAIT" in action:
+        cvar = APP_CONFIG.get(f"{prefix}_historical_cvar", 3.0)
+        risk_text = f"Risk Note: On the worst 5% of days historically, rack prices spiked +{cvar:.2f}¢/gal (+${cvar * 85:.0f} per 8,500 gal truck)."
 
     # Immutable Prediction Audit Log (Idempotent)
     try:
@@ -479,7 +500,10 @@ def build_rack_signal(prefix, data, now):
         "change_cents": change_cents,
         "basis": basis,
         "signal_price": signal_price,
-        "threshold_cents": hike_thresh
+        "threshold_cents": hike_thresh,
+        "z_score": z_score,
+        "conviction": conviction,
+        "risk_text": risk_text
     }
 
 def attach_rack_signals(all_data, now):
@@ -896,11 +920,32 @@ def build_html_email(subject, all_data, now, alert_context):
                 return ""
             if signal.get('change_cents') is None:
                 return f'<span style="color:#64748b;font-weight:800;">{name} NO SIGNAL:</span> Missing prior settlement baseline.<br>'
-            return (
-                f'<span style="color:{signal["color"]};font-weight:800;">{name} {signal["label"].upper()}:</span> '
-                f'{signal["change_cents"]:+.2f} c/gal vs prior settle. '
-                f'<span style="color:#64748b;">Basis: {signal["basis"]}.</span><br>'
-            )
+            
+            conv_color = "#3b82f6" if "Moderate" in signal.get("conviction", "") else "#ef4444" if "High" in signal.get("conviction", "") else "#64748b"
+            
+            html_lines = [
+                f'<div style="margin-bottom: 8px;">',
+                f'  <span style="color:{signal["color"]};font-weight:800;">{name} {signal["label"].upper()}:</span> ',
+                f'  {signal["change_cents"]:+.2f} c/gal vs prior settle. ',
+                f'  <span style="color:#64748b;font-size:11px;">(Basis: {signal["basis"]})</span><br>',
+            ]
+            
+            if signal.get("z_score") is not None:
+                html_lines.append(
+                    f'  <span style="display:inline-block;margin-top:2px;padding:1px 6px;background:#f1f5f9;border-radius:3px;font-size:10px;color:{conv_color};font-weight:700;">'
+                    f'    {signal["conviction"]} (Z-Score: {signal["z_score"]:+.2f})'
+                    f'  </span>'
+                )
+            
+            if signal.get("risk_text"):
+                html_lines.append(
+                    f'  <p style="margin:4px 0 0;font-size:11px;color:#475569;font-style:italic;line-height:1.4;">'
+                    f'    {signal["risk_text"]}'
+                    f'  </p>'
+                )
+                
+            html_lines.append('</div>')
+            return "\n".join(html_lines)
                 
         v_rb = get_verdict(rb, 'UNLEADED')
         v_ho = get_verdict(ho, 'DIESEL')
@@ -910,11 +955,11 @@ def build_html_email(subject, all_data, now, alert_context):
       <p style="margin:0 0 6px;font-size:11px;color:#8b5cf6;text-transform:uppercase;letter-spacing:0.1em;font-weight:800;">
         {alert_context['label']}
       </p>
-      <p style="margin:0;font-size:13px;color:#0f172a;line-height:1.6;">
+      <div style="margin:0;font-size:13px;color:#0f172a;line-height:1.6;">
         {v_rb}{v_ho}
-      </p>
+      </div>
       <p style="margin:8px 0 0;font-size:11px;color:#64748b;line-height:1.5;">
-        Action threshold: +/-{APP_CONFIG.get('RB_HIKE_THRESHOLD_CENTS', 1.0):.1f} c/gal. Smaller moves are treated as low-confidence because OPIS rack postings also reflect local spot basis and supplier behavior.
+        Action thresholds: Unleaded +/-{APP_CONFIG.get('RB_HIKE_THRESHOLD_CENTS', 1.0):.2f} c/gal | Diesel +/-{APP_CONFIG.get('HO_HIKE_THRESHOLD_CENTS', 1.0):.2f} c/gal. Confidence levels are adjusted dynamically using rolling historical volatility.
       </p>
     </div>'''
     elif alert_context.get('action'):
@@ -1025,11 +1070,19 @@ def send_sms(all_data, now, alert_context):
             signal = rb['rack_signal']
             if signal.get('change_cents') is not None:
                 lines.append(f"Gas: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
+                if signal.get('conviction'):
+                    lines.append(f"  Conviction: {signal['conviction']}")
+                if signal.get('risk_text'):
+                    lines.append(f"  {signal['risk_text']}")
             
         if ho and ho.get('rack_signal'):
             signal = ho['rack_signal']
             if signal.get('change_cents') is not None:
                 lines.append(f"Diesel: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
+                if signal.get('conviction'):
+                    lines.append(f"  Conviction: {signal['conviction']}")
+                if signal.get('risk_text'):
+                    lines.append(f"  {signal['risk_text']}")
             
         lines.append("")
     
