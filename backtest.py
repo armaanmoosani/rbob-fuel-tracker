@@ -56,6 +56,7 @@ def git_commit_push(message):
             print("No config changes to commit.")
     except Exception as e:
         print(f"Git commit/push failed: {e}")
+        raise e
 
 def get_clean_deltas(df, nymex_col, rack_col):
     """

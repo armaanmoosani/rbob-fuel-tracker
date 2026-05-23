@@ -233,10 +233,19 @@ def main():
     
     print("Triggering nightly backtester auto-tune...")
     try:
-        subprocess.run(["python", "backtest.py"], check=True)
+        result = subprocess.run(["python", "backtest.py"], capture_output=True, text=True, check=True)
+        if result.stdout:
+            print(result.stdout)
     except subprocess.CalledProcessError as e:
         print(f"Backtester crashed: {e}")
-        send_alert_email("Fuel Tracker Error", "The nightly backtester crashed and could not update the statistical thresholds. Check GitHub Actions logs.")
+        if e.stdout:
+            print(f"Stdout:\n{e.stdout}")
+        if e.stderr:
+            print(f"Stderr:\n{e.stderr}")
+        send_alert_email(
+            "CRITICAL: Nightly calibration commit failed",
+            f"The nightly backtester calibration failed to run or commit changes.\n\nError: {e}\n\nStderr:\n{e.stderr}\n\nPlease check GitHub Actions logs."
+        )
 
 if __name__ == "__main__":
     main()

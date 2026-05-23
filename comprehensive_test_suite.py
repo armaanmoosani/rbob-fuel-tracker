@@ -892,6 +892,106 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
         self.assertIn("LOG_OUTBOUND_FAILURE", output)
 
 
+class TestCategory13LiveValidationAndRobustness(unittest.TestCase):
+    """Category 13: Live Validation & Robustness Regression Tests"""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.csv_path = os.path.join(self.temp_dir, "graves_history.csv")
+        self.log_path = os.path.join(self.temp_dir, "prediction_log.csv")
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    def test_13_1_fuzzer_sandbox_isolation(self):
+        import scratch.fuzz_parser
+        scratch.fuzz_parser.run_fuzzer()
+
+    @patch('subprocess.run')
+    @patch('ingest_prices.send_alert_email')
+    def test_13_2_git_commit_failure_notification(self, mock_send_email, mock_sub_run):
+        import subprocess
+        mock_sub_run.side_effect = subprocess.CalledProcessError(
+            returncode=1,
+            cmd=["python", "backtest.py"],
+            output="Mock stdout info",
+            stderr=b"git push failed: Merge conflict in config.json"
+        )
+        
+        with patch.dict(os.environ, {
+            'GRAVES_EMAIL': 'mock@example.com',
+            'GRAVES_APP_PASSWORD': 'mock',
+            'GMAIL_USER': 'mock',
+            'GMAIL_APP_PASSWORD': 'mock',
+            'TO_EMAIL': 'mock@example.com',
+            'GITHUB_EVENT_NAME': 'workflow_dispatch'
+        }):
+            with patch('ingest_prices.check_inbox_for_prices') as mock_inbox:
+                mock_inbox.return_value = ("2026-05-22", (2.10, 2.20, 2.30))
+                with patch('ingest_prices.read_daily_settlement') as mock_settle:
+                    mock_settle.return_value = {"rbob_settlement": 2.05, "heating_oil_settlement": 2.15}
+                    with patch('ingest_prices.git_pull_rebase'), patch('ingest_prices.git_commit_push'):
+                        with patch('ingest_prices.CSV_PATH', self.csv_path):
+                            with open(self.csv_path, "w") as f:
+                                f.write("date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
+                            
+                            try:
+                                ingest_prices.main()
+                            except SystemExit:
+                                pass
+        
+        mock_send_email.assert_called_once()
+        args, kwargs = mock_send_email.call_args
+        subject = args[0]
+        body = args[1]
+        
+        self.assertEqual(subject, "CRITICAL: Nightly calibration commit failed")
+        self.assertIn("git push failed: Merge conflict in config.json", body)
+
+    def test_13_3_prediction_log_backfill_overwrite_guard(self):
+        import argparse
+        import scratch.check_prediction_log_completeness as backfiller
+        from io import StringIO
+        
+        # We simulate duplicates by having the same date twice in graves_history.csv,
+        # which will cause both rows to be candidate trading days.
+        with open(self.csv_path, "w") as f:
+            f.write("date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
+            f.write("2026-05-20,2.10,2.20,2.30,2.40,2.50\n")
+            f.write("2026-05-21,2.12,2.22,2.32,2.42,2.52\n")
+            f.write("2026-05-21,2.12,2.22,2.32,2.42,2.52\n")
+            
+        # Empty prediction log initially
+        with open(self.log_path, "w") as f:
+            f.write("timestamp,commodity,predicted_direction,nymex_move_cents,lag_used,window_used,threshold_used,actual_next_day_move_cents,prediction_source\n")
+            
+        old_csv = backfiller.CSV_PATH
+        old_log = backfiller.LOG_PATH
+        backfiller.CSV_PATH = self.csv_path
+        backfiller.LOG_PATH = self.log_path
+        
+        old_stdout = sys.stdout
+        sys.stdout = mystdout = StringIO()
+        
+        try:
+            with patch('scratch.check_prediction_log_completeness.simulate_thresholds_at_date') as mock_sim:
+                mock_sim.return_value = {}
+                with patch('argparse.ArgumentParser.parse_args') as mock_args:
+                    mock_args.return_value = argparse.Namespace(backfill=True)
+                    try:
+                        backfiller.main()
+                    except SystemExit:
+                        pass
+        finally:
+            sys.stdout = old_stdout
+            backfiller.CSV_PATH = old_csv
+            backfiller.LOG_PATH = old_log
+            
+        output = mystdout.getvalue()
+        self.assertIn("WARNING: Entry already exists in prediction log", output)
+        self.assertIn("Skipping safely to prevent duplicate/overwrite", output)
+
+
 if __name__ == "__main__":
     unittest.main()
 
