@@ -31,8 +31,11 @@ def load_config():
     }
 
 def save_config(cfg):
-    with open(CONFIG_PATH, "w") as f:
+    tmp_path = CONFIG_PATH + ".tmp"
+    with open(tmp_path, "w") as f:
         json.dump(cfg, f, indent=2)
+    os.replace(tmp_path, CONFIG_PATH)
+
 
 def clamp(val, min_val, max_val):
     return max(min_val, min(val, max_val))

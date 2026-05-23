@@ -74,7 +74,49 @@ def is_cme_holiday(dt):
 
     return False
 
+def repair_csv_if_corrupted(csv_path):
+    if not os.path.exists(csv_path):
+        return
+    try:
+        with open(csv_path, "rb") as f:
+            content = f.read()
+        if not content:
+            return
+        
+        try:
+            text = content.decode('utf-8')
+        except UnicodeDecodeError:
+            text = content.decode('utf-8', errors='ignore')
+            
+        lines = text.splitlines()
+        if not lines:
+            return
+            
+        # Get last non-empty line
+        last_idx = len(lines) - 1
+        while last_idx >= 0 and not lines[last_idx].strip():
+            last_idx -= 1
+            
+        if last_idx < 0:
+            return
+            
+        last_line = lines[last_idx].strip()
+        parts = last_line.split(',')
+        is_header = (parts[0] == "date")
+        
+        if not is_header and len(parts) != 6:
+            print(f"WARNING: Malformed or truncated row detected at the end of CSV: {repr(last_line)}. Repairing...")
+            # Prune the malformed last line
+            repaired_lines = lines[:last_idx]
+            repaired_text = "\n".join(repaired_lines) + "\n"
+            with open(csv_path, "w", encoding="utf-8") as f:
+                f.write(repaired_text)
+            print("CSV repaired successfully by pruning the malformed/truncated row.")
+    except Exception as e:
+        print(f"Warning: Failed to check or repair CSV: {e}")
+
 def validate_graves_history(csv_path):
+    repair_csv_if_corrupted(csv_path)
     if not os.path.exists(csv_path):
         print(f"Data validation failed: Graves history CSV not found at {csv_path}")
         sys.exit(1)

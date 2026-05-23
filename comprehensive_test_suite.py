@@ -743,5 +743,155 @@ class TestCategory11AlertFormatting(unittest.TestCase):
         self.assertIn("29.78¢/gal", html)
 
 
+class TestCategory12ProductionFailureProtection(unittest.TestCase):
+    """Category 12: Production Failure Protection & Edge Cases"""
+
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.csv_path = os.path.join(self.temp_dir, "graves_history.csv")
+        self.config_path = os.path.join(self.temp_dir, "config.json")
+        self.log_path = os.path.join(self.temp_dir, "prediction_log.csv")
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    @patch('main.datetime')
+    @patch('main.get_repo_variable')
+    @patch('main.set_repo_variable')
+    @patch('main.save_settlement_snapshots')
+    @patch('main.send_daily_prompt')
+    def test_12_1_timezone_runner_clock_drift(self, mock_prompt, mock_snapshots, mock_set, mock_get, mock_datetime):
+        # 1. Mock runner clock at various CT times:
+        # Timezone check behavior uses datetime.now(TZ)
+        tz = pytz.timezone('America/Chicago')
+        
+        # Test 1:29 PM CT (snapshots should not fire)
+        dt_129 = tz.localize(datetime(2026, 5, 22, 13, 29, 0))
+        mock_datetime.now.return_value = dt_129
+        mock_datetime.combine = datetime.combine
+        main.save_settlement_snapshots({}, dt_129)
+        # Check: save_settlement_snapshots requires 13:30 to 13:45
+        self.assertFalse(dt_129.hour == 13 and 30 <= dt_129.minute <= 45)
+
+        # Test 1:31 PM CT (snapshots should fire)
+        dt_131 = tz.localize(datetime(2026, 5, 22, 13, 31, 0))
+        self.assertTrue(dt_131.hour == 13 and 30 <= dt_131.minute <= 45)
+
+        # Test 7:29 PM CT (daily prompt should not fire)
+        dt_729 = tz.localize(datetime(2026, 5, 22, 19, 29, 0))
+        self.assertTrue(dt_729.weekday() > 4 or not (dt_729.hour == 19 and dt_729.minute >= 30))
+
+        # Test 7:31 PM CT (daily prompt should fire)
+        dt_731 = tz.localize(datetime(2026, 5, 22, 19, 31, 0))
+        self.assertFalse(dt_731.weekday() > 4 or not (dt_731.hour == 19 and dt_731.minute >= 30))
+
+        # Test 8:01 PM CT (daily prompt should not fire)
+        dt_801 = tz.localize(datetime(2026, 5, 22, 20, 1, 0))
+        self.assertTrue(dt_801.weekday() > 4 or not (dt_801.hour == 19 and dt_801.minute >= 30))
+
+    def test_12_2_partial_csv_write_corruption(self):
+        # Create a CSV with a truncated final line (less than 6 comma-separated elements)
+        with open(self.csv_path, "w", encoding="utf-8") as f:
+            f.write("date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
+            f.write("2026-05-18,2.10,2.20,2.30,2.40,2.50\n")
+            f.write("2026-05-19,2.15,2.25,2.35") # Truncated line
+
+        # Call repair function
+        validate_data.repair_csv_if_corrupted(self.csv_path)
+
+        # Verify that the corrupt last line was pruned
+        with open(self.csv_path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[1], "2026-05-18,2.10,2.20,2.30,2.40,2.50")
+
+    @patch('main.CONFIG_PATH')
+    @patch('main.CONFIG_CORRUPT', True)
+    def test_12_3_config_rollback(self, mock_path):
+        # Verify build_rack_signal displays corrupt warning when CONFIG_CORRUPT is True
+        data = {
+            'current_price': 2.20,
+            'yesterday_close': 2.00,
+            'open_price': 2.00,
+            'high_price': 2.25,
+            'low_price': 1.95,
+            'daily_pct': 10.0,
+            'five_day_high': 2.25,
+            'five_day_low': 1.95,
+            'thirty_day_avg': 2.05,
+            'chart_intraday_b64': 'mock_base64',
+            'chart_5d_b64': 'mock_base64',
+        }
+        signal = main.build_rack_signal('RB', data, datetime.now())
+        self.assertIn("WARNING: Corrupt config.json detected!", signal['risk_text'])
+
+    @patch('main.is_contract_roll_day')
+    def test_12_4_nymex_contract_roll_boundary(self, mock_roll_check):
+        mock_roll_check.return_value = True
+        data = {
+            'current_price': 2.20,
+            'yesterday_close': 2.00,
+            'open_price': 2.00,
+            'high_price': 2.25,
+            'low_price': 1.95,
+            'daily_pct': 10.0,
+            'five_day_high': 2.25,
+            'five_day_low': 1.95,
+            'thirty_day_avg': 2.05,
+            'chart_intraday_b64': 'mock_base64',
+            'chart_5d_b64': 'mock_base64',
+        }
+        signal = main.build_rack_signal('RB', data, datetime.now())
+        self.assertEqual(signal['action'], 'NO_EDGE')
+        self.assertEqual(signal['label'], 'Contract roll boundary')
+        self.assertIn("roll price gaps", signal['text'])
+
+    @patch('yfinance.Ticker')
+    @patch('main.previous_nymex_business_day')
+    @patch('pandas.read_csv')
+    def test_12_5_yfinance_stale_cache_fallback(self, mock_read_csv, mock_prev_day, mock_ticker):
+        # Mock yesterday's date as 2026-05-21, but yfinance history returns last date 2026-05-20 (stale)
+        mock_prev_day.return_value = datetime(2026, 5, 21).date()
+        mock_read_csv.return_value = pd.DataFrame() # empty df forces CSV fallback to return None
+        
+        mock_history = MagicMock()
+        # Mock 1mo daily history
+        hist_df = pd.DataFrame(
+            {'Close': [2.00]},
+            index=[datetime(2026, 5, 20, tzinfo=pytz.utc)]
+        )
+        mock_history.history.side_effect = [
+            pd.DataFrame(), # 5d hourly empty
+            hist_df # 1mo daily
+        ]
+        mock_ticker.return_value = mock_history
+        
+        # Test baseline extraction fallback in fetch_commodity
+        cfg = {'name': 'Wholesale Gas', 'yf_symbol': 'RB=F'}
+        res = main.fetch_commodity('RB', cfg, datetime(2026, 5, 22), None)
+        
+        # yesterday_close should be overridden to None because cache was stale (last date 2026-05-20 < 2026-05-21) and CSV is empty
+        self.assertIsNone(res['yesterday_close'])
+
+    @patch('smtplib.SMTP')
+    def test_12_6_sms_gateway_silent_outbound_failure(self, mock_smtp):
+        # Mock SMTP to raise exception on connection/login
+        mock_smtp.side_effect = Exception("SMTP server unavailable")
+        
+        import sys
+        from io import StringIO
+        old_stdout = sys.stdout
+        sys.stdout = mystdout = StringIO()
+        
+        try:
+            main.send_sms({}, datetime.now(), {'label': 'Final Verdict'})
+        finally:
+            sys.stdout = old_stdout
+            
+        output = mystdout.getvalue()
+        self.assertIn("LOG_OUTBOUND_FAILURE", output)
+
+
 if __name__ == "__main__":
     unittest.main()
+

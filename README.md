@@ -56,6 +56,16 @@ Unleaded precision has increased monotonically over the three years (52.9% -> 54
 > [!CAUTION]
 > **Volatility Warning:** If the 2025 precision increase is primarily a result of calm markets rather than model improvement, a return of high-volatility spikes in 2026 could cause performance to revert to the conservative planning floor of **53% (RB)** / **60% (HO)**. Decisions like storage capacity investment or cash flow planning should always be stress-tested at the 53% / 60% floors, not the recent 96% regime levels.
 
+### 4. Category B Audits & Operational Edge Constraints
+
+We conducted six empirical audits to identify the operational limits and structural characteristics of the model's edge:
+*   **Conviction-Conditional Precision over Time (`conviction_regime_audit.py`):** Across normal market conditions, filtering out Low Conviction alerts ($|Z| < 1.0$) eliminates the structural noise drag. Moderate and High conviction alerts remain highly robust and deliver positive expected edge even in low-precision years (like 2024, where Low Conviction alerts actually drag performance to negative territory: -0.11¢/gal for RB and -0.33¢/gal for HO).
+*   **Weekday Alert Performance (`weekday_performance_audit.py`):** Mondays and Tuesdays are the highest-performing days for both commodities, with Monday precision reaching **83.33%** for Unleaded and **97.30%** for Diesel. Fridays do see a moderate precision drop relative to Monday/Tuesday, but they remain strictly profitable and exceed the conservative planning floors.
+*   **Basis Drift Detection (`basis_drift_audit.py`):** Running the Mann-Kendall trend test with Sen's slope estimator revealed that the basis is highly dynamic. Over the full history, the drift is tiny (under 0.01¢/day), but over the last 90 trading days, massive structural basis shifts occurred in both commodities. This confirms why walk-forward calibration is crucial: standard static thresholds would fail under such rapid basis drift, whereas our daily auto-calibration successfully adapts to the shifted environment.
+*   **Savings Decay after Signal (`savings_decay_audit.py`):** If a buyer delays purchasing by 1 day, the rack price has already adjusted (rising by +1.72¢ for RB and +1.61¢ for HO), wiping out approximately **30-40%** of the potential savings. By day 3, the physical price movement has fully absorbed the signal, confirming that prompt execution before the midnight deadline is vital to capturing the edge.
+*   **Seasonal Threshold Calibration (`seasonal_calibration_audit.py`):** Seasonal threshold sweeps slightly underperformed the unified annual walk-forward calibration (by -0.52% for Unleaded and -1.01% for Diesel). Partitioning the data into seasonal blocks reduces sample size and introduces data-snooping risk without improving performance. Therefore, we should stick to the unified annual walk-forward window.
+*   **Drawdown Streak Analysis (`drawdown_audit.py`):** High Conviction alerts have an incredibly robust risk profile, with maximum consecutive drawdowns of only 3 losses for Unleaded and just 1 loss for Diesel. In contrast, Low Conviction alerts can experience long losing streaks (up to 9 consecutive losses for Diesel). Operational fuel buyers should skew capital allocations heavily toward High Conviction signals and treat Low Conviction signals with caution.
+
 ---
 
 ## Core Features
@@ -103,7 +113,7 @@ To deploy this securely to your own private repository:
 The repository contains a highly thorough, multi-tiered testing framework:
 
 1. **Comprehensive Test Suite (`comprehensive_test_suite.py`)**: 
-   - A unit-test suite with 37 tests covering all 10 core categories (email parsing, bounds checks, sorting order, timezone boundaries, lag math, OLS Rockets & Feathers, threshold clamping, walk-forward isolation, CVaR and Z-score calculations). Run with:
+   - A unit-test suite with **54 tests** covering all **12 core categories** (email parsing, bounds checks, sorting order, timezone boundaries, lag math, OLS Rockets & Feathers, threshold clamping, walk-forward isolation, CVaR and Z-score calculations, timezone drift simulations, partial CSV auto-repairs, config fallback systems, yfinance cache staleness, SMTP outbound logging, and conviction format verification). Run with:
      ```bash
      python comprehensive_test_suite.py
      ```
@@ -117,12 +127,24 @@ The repository contains a highly thorough, multi-tiered testing framework:
      ```bash
      python verify_statistics.py
      ```
-4. **Stress Testing and Sensitivity Sweep (`scratch/run_simulations.py`)**:
+4. **Category B Empirical Audits (`scratch/`)**:
+   - Six specialized empirical audits designed to identify boundary conditions, decay curves, weekday characteristics, and risk structures:
+     - `conviction_regime_audit.py`: Breakdown of win rate and savings binned by Z-score conviction across all years.
+     - `weekday_performance_audit.py`: Weekday alert performance to test weekend decays or Friday drift.
+     - `basis_drift_audit.py`: Mann-Kendall trend check with Sen's slope estimator to verify basis stability.
+     - `savings_decay_audit.py`: Measures pricing decay when purchase execution is delayed by 1-3 trading days.
+     - `seasonal_calibration_audit.py`: Sweeps seasonal Summer vs. Winter calibrations against unified annual calibration.
+     - `drawdown_audit.py`: Identifies worst-case consecutive losing streaks and drawdowns binned by Z-score conviction level.
+     Run any audit directly:
+     ```bash
+     python scratch/conviction_regime_audit.py
+     ```
+5. **Stress Testing and Sensitivity Sweep (`scratch/run_simulations.py`)**:
    - Audits model limitations under parameter sensitivity (169 grid sweep), simulates extreme geopolitical black swan shocks ($\pm40\text{¢/gal}$ daily moves) to verify threshold adaptability, and conducts contract roll spuriousness checks. Run with:
      ```bash
      python scratch/run_simulations.py
      ```
-5. **Data Injections (`scratch/test_validation_injection.py`)**:
+6. **Data Injections (`scratch/test_validation_injection.py`)**:
    - Asserts that the data validation parser successfully catches duplicate dates, invalid bounds, weekday gaps, and negative numbers. Run with:
      ```bash
      python scratch/test_validation_injection.py

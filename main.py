@@ -67,11 +67,14 @@ MAX_SMS_CHARS = 1200
 # Load Config
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
+CONFIG_CORRUPT = False
 try:
     with open(CONFIG_PATH, "r") as f:
         APP_CONFIG = json.load(f)
     print("Loaded config.json custom thresholds.")
 except Exception as e:
+    if os.path.exists(CONFIG_PATH):
+        CONFIG_CORRUPT = True
     print(f"Warning: Could not load config.json, using defaults. ({e})")
     APP_CONFIG = {
         "MIN_ROWS_FOR_TUNING": 30,
@@ -218,6 +221,22 @@ def get_front_month_contract(dt, prefix):
             return contract_year, contract_month, ltd
         contract_year, contract_month = add_month(contract_year, contract_month, 1)
     raise RuntimeError(f"Could not resolve front-month contract for {prefix}")
+
+def is_contract_roll_day(dt, prefix):
+    today = dt.date()
+    try:
+        cyear, cmonth, ltd = get_front_month_contract(dt, prefix)
+        if today == ltd:
+            return True
+        prev_day = previous_nymex_business_day(today)
+        prev_dt = datetime.combine(prev_day, time(12, 0))
+        p_cyear, p_cmonth, p_ltd = get_front_month_contract(prev_dt, prefix)
+        if prev_day == p_ltd:
+            return True
+    except Exception:
+        pass
+    return False
+
 
 def get_front_month_schwab_symbol(dt, prefix):
     contract_year, contract_month, _ = get_front_month_contract(dt, prefix)
@@ -408,6 +427,48 @@ def build_rack_signal(prefix, data, now):
     basis = "1:30 PM CT settlement-window snapshot" if snapshot_price is not None else "live price proxy"
     change_cents = (signal_price - yest) * 100
     name = COMMODITIES[prefix]['name']
+    hike_thresh = APP_CONFIG.get(f"{prefix}_HIKE_THRESHOLD_CENTS", 1.0)
+
+    # Check for contract roll day override
+    if is_contract_roll_day(now, prefix):
+        risk_text = "Suppressing alert due to NYMEX front-month contract rollover day."
+        if CONFIG_CORRUPT:
+            risk_text += " WARNING: Corrupt config.json detected! System has rolled back to defaults."
+            
+        try:
+            log_path = os.path.join(DATA_DIR, "prediction_log.csv")
+            file_exists = os.path.exists(log_path)
+            local_now = now.astimezone(TZ)
+            session_str = local_now.date().isoformat()
+            already_logged = False
+            if file_exists:
+                with open(log_path, "r") as f:
+                    for line in f:
+                        if line.startswith(session_str) and f",{prefix}," in line:
+                            already_logged = True
+                            break
+            if not already_logged:
+                with open(log_path, "a") as f:
+                    if not file_exists:
+                        f.write("timestamp,commodity,predicted_direction,nymex_move_cents,lag_used,window_used,threshold_used,actual_next_day_move_cents\n")
+                    f.write(f"{local_now.isoformat()},{prefix},FLAT,0.00,0,120,0.00,PENDING\n")
+        except Exception as e:
+            print(f"Failed to write prediction log: {e}")
+
+        return {
+            "action": "NO_EDGE",
+            "label": "Contract roll boundary",
+            "color": "#64748b",
+            "text": f"{name}: CONTRACT ROLL BOUNDARY (0.00 c/gal vs prior settle). Alert suppressed to prevent false signals from artificial roll price gaps.",
+            "change_cents": 0.0,
+            "basis": basis,
+            "signal_price": signal_price,
+            "threshold_cents": hike_thresh,
+            "z_score": 0.0,
+            "conviction": "Low Conviction",
+            "risk_text": risk_text
+        }
+
 
     # Load dynamic thresholds and stats from config
     hike_thresh = APP_CONFIG.get(f"{prefix}_HIKE_THRESHOLD_CENTS", 1.0)
@@ -493,7 +554,14 @@ def build_rack_signal(prefix, data, now):
             f"(+${cvar * 85:.0f} per standard 8,500-gallon truck). Defer purchase only if inventory capacity allows."
         )
 
+    if CONFIG_CORRUPT:
+        if risk_text:
+            risk_text += " WARNING: Corrupt config.json detected! System has rolled back to defaults."
+        else:
+            risk_text = "WARNING: Corrupt config.json detected! System has rolled back to defaults."
+
     # Immutable Prediction Audit Log (Idempotent)
+
     try:
         log_path = os.path.join(DATA_DIR, "prediction_log.csv")
         file_exists = os.path.exists(log_path)
@@ -1180,7 +1248,7 @@ def send_sms(all_data, now, alert_context):
             
         srv.quit()
     except Exception as e:
-        print(f"SMS send failed (non-fatal): {e}")
+        print(f"LOG_OUTBOUND_FAILURE: SMS send failed (non-fatal): {e}")
 
 def send_email(subject, all_data, now, alert_context):
     try:
@@ -1220,9 +1288,10 @@ def send_email(subject, all_data, now, alert_context):
             
         server.quit()
     except Exception as e:
-        print(f"Email send failed: {e}")
+        print(f"LOG_OUTBOUND_FAILURE: Email send failed: {e}")
 
     send_sms(all_data, now, alert_context)
+
 
 def send_once_today(key, subject, all_data, now, alert_context):
     session_str = get_session_date_str(now)
@@ -1240,6 +1309,43 @@ def send_once_today(key, subject, all_data, now, alert_context):
     except Exception as e:
         print(f"Warning: could not save lock {db_key}: {e}")
 
+def send_daily_prompt(now):
+    # Only run at 7:30 PM CT (19:30) on weekdays
+    if now.weekday() > 4 or not (now.hour == 19 and now.minute >= 30):
+        return
+
+    session_str = get_session_date_str(now)
+    db_key = "SENT_DAILY_PROMPT"
+    
+    # Use repo variable checkpoint to ensure it only sends once
+    last_sent = get_repo_variable(db_key)
+    if last_sent == session_str:
+        return
+        
+    print("Time is 19:30 CT. Sending daily SMS price prompt...")
+    body = "Please reply with today's Graves Oil prices.\nFormat: Unleaded Premium Diesel\n(e.g. 2.10 2.30 2.50)"
+    
+    try:
+        sms_msg = MIMEText(body)
+        sms_msg['Subject'] = 'Graves Oil Prices Needed'
+        sms_msg['From'] = GMAIL_USER
+        
+        srv = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)
+        srv.starttls()
+        srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
+        
+        phones = TO_PHONE_SMS
+        for phone in phones:
+            sms_msg['To'] = phone
+            srv.sendmail(GMAIL_USER, phone, sms_msg.as_string())
+            print(f"Daily prompt sent to {phone}")
+            
+        srv.quit()
+        
+        # Checkpoint successful send
+        set_repo_variable(db_key, session_str)
+    except Exception as e:
+        print(f"LOG_OUTBOUND_FAILURE: Failed to send daily prompt: {e}")
 
 def main():
     start_time = datetime.now(timezone.utc)
@@ -1368,7 +1474,10 @@ def main():
                 
         send_once_today(f"UPDATE_{local_now.strftime('%H')}", f"Market Update — {local_now.strftime('%-I %p')}", all_data, now, alert_ctx)
 
+    send_daily_prompt(now)
+
     print(f"Total time: {(datetime.now(timezone.utc) - start_time).total_seconds():.1f}s")
+
 
 def is_market_open(dt):
     def simple_globex_energy_hours(ts):
@@ -1512,9 +1621,16 @@ def fetch_commodity(prefix, cfg, now, access_token):
             session_date_str = get_session_date_str(now)
             session_date = datetime.fromisoformat(session_date_str).date()
             prev_daily = h30d[[d.date() < session_date for d in h30d.index.to_pydatetime()]]
-            if not prev_daily.empty and yesterday_close is None:
-                yesterday_close = float(prev_daily['Close'].iloc[-1])
+            if not prev_daily.empty:
+                last_daily_date = prev_daily.index[-1].date()
+                target_prev_day = previous_nymex_business_day(session_date)
+                if last_daily_date < target_prev_day:
+                    print(f"[{prefix}] Warning: yfinance daily close history is stale (last available: {last_daily_date}, expected: {target_prev_day}). Bypassing yfinance close price.")
+                    yesterday_close = None
+                elif yesterday_close is None:
+                    yesterday_close = float(prev_daily['Close'].iloc[-1])
             thirty_day_avg = float(h30d['Close'].mean())
+
             if len(h30d) >= 3:
                 sma_3 = float(h30d['Close'].tail(3).mean())
             if len(h30d) >= 10:
