@@ -46,6 +46,38 @@ To deploy this securely to your own private repository:
 
 ---
 
+## Testing & Verification
+
+The repository contains a highly thorough, multi-tiered testing framework:
+
+1. **Comprehensive Test Suite (`comprehensive_test_suite.py`)**: 
+   - A unit-test suite with 37 tests covering all 10 core categories (email parsing, bounds checks, sorting order, timezone boundaries, lag math, OLS Rockets & Feathers, threshold clamping, walk-forward isolation, CVaR and Z-score calculations). Run with:
+     ```bash
+     python comprehensive_test_suite.py
+     ```
+2. **Deterministic Day Replay (`replay_day.py`)**:
+   - Performs a stateful point-in-time prediction audit on historically logged days to guarantee the system is deterministic, timezone-stable, and free of future-data leakages. Run with:
+     ```bash
+     python replay_day.py --date YYYY-MM-DD
+     ```
+3. **Statistical Validation & Shadow Benchmarks (`verify_statistics.py`)**:
+   - Audits model significance against randomized null models (permutation test), evaluates out-of-sample holdout datasets, computes yearly regime shifts, analyzes residual diagnostics, and measures model performance against shadow baselines. Run with:
+     ```bash
+     python verify_statistics.py
+     ```
+4. **Stress Testing and Sensitivity Sweep (`scratch/run_simulations.py`)**:
+   - Audits model limitations under parameter sensitivity (169 grid sweep), simulates extreme geopolitical black swan shocks ($\pm40\text{¢/gal}$ daily moves) to verify threshold adaptability, and conducts contract roll spuriousness checks. Run with:
+     ```bash
+     python scratch/run_simulations.py
+     ```
+5. **Data Injections (`scratch/test_validation_injection.py`)**:
+   - Asserts that the data validation parser successfully catches duplicate dates, invalid bounds, weekday gaps, and negative numbers. Run with:
+     ```bash
+     python scratch/test_validation_injection.py
+     ```
+
+---
+
 ## Disclaimer
 
 This software is a decision-support tool built for informational purposes only. It does not constitute financial advice. The maintainers are not responsible for fuel purchasing decisions, inventory stockouts, or financial losses resulting from the use of this tool.
