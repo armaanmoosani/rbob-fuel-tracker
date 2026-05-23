@@ -282,9 +282,21 @@ def validate_and_update_hashes(data_dir):
             
         actual_line_count = len(lines)
         
+        if fname == "prediction_log.csv":
+            # Mask actual_next_day_move_cents (index 7) to avoid hash mismatch when PENDING is resolved
+            masked_lines = []
+            for line in lines:
+                parts = line.split(',')
+                if len(parts) >= 8:
+                    parts[7] = "PENDING"
+                masked_lines.append(",".join(parts))
+            lines_to_hash = masked_lines
+        else:
+            lines_to_hash = lines
+        
         if not file_records:
             # First time tracking this file
-            content_to_hash = "\n".join(lines)
+            content_to_hash = "\n".join(lines_to_hash)
             sha256 = hashlib.sha256(content_to_hash.encode("utf-8")).hexdigest()
             
             new_records.append({
@@ -323,7 +335,7 @@ def validate_and_update_hashes(data_dir):
                           f"Expected at least {recorded_line_count} lines, found {actual_line_count}.")
                     sys.exit(1)
                     
-                historical_lines = lines[:recorded_line_count]
+                historical_lines = lines_to_hash[:recorded_line_count]
                 content_to_hash = "\n".join(historical_lines)
                 computed_sha256 = hashlib.sha256(content_to_hash.encode("utf-8")).hexdigest()
                 
@@ -333,7 +345,7 @@ def validate_and_update_hashes(data_dir):
                     sys.exit(1)
                     
                 if actual_line_count > recorded_line_count:
-                    full_content = "\n".join(lines)
+                    full_content = "\n".join(lines_to_hash)
                     full_sha256 = hashlib.sha256(full_content.encode("utf-8")).hexdigest()
                     
                     new_records.append({

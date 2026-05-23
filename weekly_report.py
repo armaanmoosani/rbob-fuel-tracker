@@ -150,7 +150,7 @@ def main():
     cumulative_savings_dollars = (cumulative_savings_cents / 100.0) * TRUCK_GALLONS
     
     # Check if we have 90 days of prediction history
-    df['timestamp_dt'] = pd.to_datetime(df['timestamp'])
+    df['timestamp_dt'] = pd.to_datetime(df['timestamp'], format='ISO8601')
     if len(df) > 0:
         has_90d_history = (df['timestamp_dt'].max() - df['timestamp_dt'].min()) >= pd.Timedelta(days=90)
     else:
@@ -356,11 +356,31 @@ def main():
     # Send Email
     email_user = os.environ.get('GMAIL_USER')
     email_pass = os.environ.get('GMAIL_APP_PASSWORD')
-    email_to = os.environ.get('TO_EMAIL', email_user)
+    email_to_env = os.environ.get('TO_EMAIL', '')
+    phone_to_env = os.environ.get('PHONE_SMS_ADDRESS', '')
     
     if not email_user or not email_pass:
         print("Missing email credentials. Cannot send report.")
         return
+        
+    recipients = []
+    if email_to_env:
+        recipients.extend([e.strip() for e in email_to_env.split(',') if e.strip()])
+    if phone_to_env:
+        recipients.extend([p.strip() for p in phone_to_env.split(',') if p.strip()])
+        
+    # Deduplicate keeping order
+    seen = set()
+    emails = []
+    for r in recipients:
+        if r not in seen:
+            seen.add(r)
+            emails.append(r)
+            
+    if not emails:
+        emails = [email_user]
+        
+    email_to = ", ".join(emails)
         
     subject = f"Weekly Performance Report - {report_date}"
     

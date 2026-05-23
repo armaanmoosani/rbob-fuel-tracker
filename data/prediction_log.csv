@@ -1,7 +1,7 @@
 timestamp,commodity,predicted_direction,nymex_move_cents,lag_used,window_used,threshold_used,actual_next_day_move_cents,prediction_source
 2026-05-21T14:35:00-05:00,RB,DROP,-10.78,0,120,-0.76,-9.93,live
 2026-05-21T14:35:00-05:00,HO,DROP,-11.55,0,120,-2.48,-12.09,live
-2026-05-22T22:47:08.163954-05:00,RB,HIKE,20.0,0,120,1.95,PENDING,live
+2026-05-22T22:47:08.163954-05:00,RB,HIKE,20.0,0,120,1.95,5.52,live
 2023-03-08T14:35:00-05:00,RB,DROP,-1.18,0,120,-1.0,-6.68,backfill
 2023-03-08T14:35:00-05:00,HO,DROP,-5.56,0,120,-1.0,-8.52,backfill
 2023-03-09T14:35:00-05:00,RB,DROP,-8.38,0,120,-1.0,1.64,backfill
@@ -1288,3 +1288,4 @@ timestamp,commodity,predicted_direction,nymex_move_cents,lag_used,window_used,th
 2026-05-19T14:35:00-05:00,HO,HIKE,4.8,0,240,1.16,6.15,backfill
 2026-05-20T14:35:00-05:00,RB,DROP,-20.88,0,240,-0.94,-18.9,backfill
 2026-05-20T14:35:00-05:00,HO,DROP,-21.54,0,240,-1.14,-23.27,backfill
+2026-05-23T09:55:13.671765-05:00,RB,HIKE,20.00,0,120,1.96,PENDING

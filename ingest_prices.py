@@ -26,18 +26,39 @@ CSV_PATH = os.path.join(DATA_DIR, "graves_history.csv")
 DS_PATH = os.path.join(DATA_DIR, "daily_settlement.json")
 
 def send_alert_email(subject, body):
-    if not TO_EMAIL or not GMAIL_USER or not GMAIL_APP_PASSWORD:
+    if not GMAIL_USER or not GMAIL_APP_PASSWORD:
         print("Cannot send alert email: missing credentials.")
         return
+        
+    email_to_env = os.environ.get('TO_EMAIL', '')
+    phone_to_env = os.environ.get('PHONE_SMS_ADDRESS', '')
+    
+    recipients = []
+    if email_to_env:
+        recipients.extend([e.strip() for e in email_to_env.split(',') if e.strip()])
+    if phone_to_env:
+        recipients.extend([p.strip() for p in phone_to_env.split(',') if p.strip()])
+        
+    # Deduplicate keeping order
+    seen = set()
+    emails = []
+    for r in recipients:
+        if r not in seen:
+            seen.add(r)
+            emails.append(r)
+            
+    if not emails:
+        emails = [GMAIL_USER]
+        
     msg = MIMEText(body)
     msg['Subject'] = subject
     msg['From'] = GMAIL_USER
-    msg['To'] = TO_EMAIL
+    msg['To'] = ", ".join(emails)
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
-            server.send_message(msg)
-        print(f"Alert email sent: {subject}")
+            server.sendmail(GMAIL_USER, emails, msg.as_string())
+        print(f"Alert email sent to {emails}: {subject}")
     except Exception as e:
         print(f"Failed to send alert email: {e}")
 
