@@ -18,6 +18,7 @@ from urllib3.util.retry import Retry
 import pytz
 import yfinance as yf
 import pandas as pd
+import numpy as np
 import concurrent.futures
 try:
     import pandas_market_calendars as mcal
@@ -517,7 +518,32 @@ def build_rack_signal(prefix, data, now):
     lean_drop = APP_CONFIG.get(f"{prefix}_LEAN_DROP_CENTS", -0.5)
     
     nymex_daily_std = APP_CONFIG.get(f"{prefix}_nymex_daily_std", 1.0)
-    z_score = change_cents / nymex_daily_std if nymex_daily_std > 0 else 0.0
+    
+    # Calculate intraday realized volatility to check for regime shifts
+    realized_vol = None
+    schwab_symbol = data.get('schwab_symbol')
+    if schwab_symbol:
+        try:
+            history_key = contract_state_prefix(prefix, schwab_symbol)
+            history_intra = load_price_history(history_key)
+            if len(history_intra) >= 10:
+                prices = [h['p'] for h in history_intra]
+                diffs = [(prices[i] - prices[i-1]) * 100 for i in range(1, len(prices))]
+                if len(diffs) >= 9:
+                    std_diffs = float(np.std(diffs, ddof=1))
+                    # Scale to daily: Globex is 17 hours = 204 intervals of 5 minutes
+                    realized_vol = std_diffs * np.sqrt(204)
+        except Exception as vol_e:
+            print(f"[{prefix}] Failed to compute realized volatility: {vol_e}")
+            
+    used_std = nymex_daily_std
+    vol_override_msg = ""
+    if realized_vol is not None and realized_vol > nymex_daily_std:
+        used_std = realized_vol
+        vol_override_msg = f" (dynamic intraday vol override: {realized_vol:.2f}c vs historical {nymex_daily_std:.2f}c)"
+        print(f"[{prefix}] Intraday regime shift detected! Volatility override active: {realized_vol:.4f} cents.")
+
+    z_score = change_cents / used_std if used_std > 0 else 0.0
     abs_z = abs(z_score)
     
     if abs_z >= 1.5:
@@ -593,6 +619,12 @@ def build_rack_signal(prefix, data, now):
             f"Risk Note: On the worst 5% of days historically, rack prices spiked +{cvar:.2f}¢/gal "
             f"(+${cvar * 85:.0f} per standard 8,500-gallon truck). Defer purchase only if inventory capacity allows."
         )
+
+    if vol_override_msg:
+        if risk_text:
+            risk_text += vol_override_msg
+        else:
+            risk_text = f"Intraday Note:{vol_override_msg}"
 
     if CONFIG_CORRUPT:
         if risk_text:

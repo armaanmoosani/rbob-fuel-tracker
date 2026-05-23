@@ -891,6 +891,49 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
         output = mystdout.getvalue()
         self.assertIn("LOG_OUTBOUND_FAILURE", output)
 
+    @patch('main.load_price_history')
+    @patch('main.APP_CONFIG')
+    def test_12_9_intraday_volatility_override(self, mock_config, mock_load_history):
+        # Setup config to return a standard nymex_daily_std of 1.0 (cents)
+        mock_config.get.side_effect = lambda key, default=None: {
+            'RB_HIKE_THRESHOLD_CENTS': 1.0,
+            'RB_DROP_THRESHOLD_CENTS': -1.0,
+            'RB_LEAN_HIKE_CENTS': 0.5,
+            'RB_LEAN_DROP_CENTS': -0.5,
+            'RB_nymex_daily_std': 1.0
+        }.get(key, default)
+        
+        # Setup high-volatility price history: 10 points with large changes
+        mock_load_history.return_value = [
+            {"t": "2026-05-23T12:00:00", "p": 2.00},
+            {"t": "2026-05-23T12:05:00", "p": 2.10},
+            {"t": "2026-05-23T12:10:00", "p": 2.00},
+            {"t": "2026-05-23T12:15:00", "p": 2.10},
+            {"t": "2026-05-23T12:20:00", "p": 2.00},
+            {"t": "2026-05-23T12:25:00", "p": 2.10},
+            {"t": "2026-05-23T12:30:00", "p": 2.00},
+            {"t": "2026-05-23T12:35:00", "p": 2.10},
+            {"t": "2026-05-23T12:40:00", "p": 2.00},
+            {"t": "2026-05-23T12:45:00", "p": 2.10},
+        ]
+        
+        data = {
+            'current_price': 2.10,
+            'yesterday_close': 2.00,
+            'open_price': 2.00,
+            'schwab_symbol': '/RBK26'
+        }
+        
+        signal = main.build_rack_signal('RB', data, datetime(2026, 5, 23, 13, 0))
+        
+        # The change_cents is 10.0.
+        # With override, Z-score is scaled down to ~0.06 (Low Conviction) instead of 10.0 (High Conviction)
+        self.assertEqual(signal['conviction'], 'Low Conviction')
+        self.assertIn("dynamic intraday vol override", signal['risk_text'])
+
+
+
+
 
 class TestCategory13LiveValidationAndRobustness(unittest.TestCase):
     """Category 13: Live Validation & Robustness Regression Tests"""
