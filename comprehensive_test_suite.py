@@ -568,5 +568,180 @@ class TestCategory10HistoricalReplay(unittest.TestCase):
         self.assertEqual(p_val, 0.20)
 
 
+class TestCategory11AlertFormatting(unittest.TestCase):
+    def setUp(self):
+        import main
+        self.orig_main_data_dir = main.DATA_DIR
+        self.temp_dir = tempfile.mkdtemp()
+        
+        # Copy config.json to the temp folder so main.py can load it
+        orig_config_path = os.path.join(self.orig_main_data_dir, "config.json")
+        if os.path.exists(orig_config_path):
+            shutil.copy(orig_config_path, self.temp_dir)
+            
+        main.DATA_DIR = self.temp_dir
+        
+        self.orig_config = main.APP_CONFIG.copy()
+        main.APP_CONFIG.update({
+            "RB_high_z_win_rate": 0.7500,
+            "RB_high_z_savings": 5.15,
+            "RB_high_z_count": 80,
+            "RB_mod_z_win_rate": 0.7619,
+            "RB_mod_z_savings": 2.81,
+            "RB_mod_z_count": 84,
+            "RB_low_z_win_rate": 0.6510,
+            "RB_low_z_savings": 0.80,
+            "RB_low_z_count": 255,
+            "RB_nymex_daily_std": 10.0,
+            "RB_historical_cvar": 17.25,
+            "HO_high_z_win_rate": -1.0,
+            "HO_high_z_savings": 0.0,
+            "HO_high_z_count": 10,
+            "HO_low_z_win_rate": 0.7277,
+            "HO_low_z_savings": 1.58,
+            "HO_low_z_count": 213,
+            "HO_nymex_daily_std": 12.0,
+            "HO_historical_cvar": 29.78,
+            "HO_HIKE_THRESHOLD_CENTS": 2.0,
+            "HO_DROP_THRESHOLD_CENTS": -2.0,
+            "RB_HIKE_THRESHOLD_CENTS": 1.0,
+            "RB_DROP_THRESHOLD_CENTS": -1.0,
+        })
+        self.now = datetime.now()
+
+    def tearDown(self):
+        import main
+        main.DATA_DIR = self.orig_main_data_dir
+        main.APP_CONFIG = self.orig_config
+        shutil.rmtree(self.temp_dir)
+
+    def test_11_1_rbob_buy_high_conviction_formatting(self):
+        import main
+        data = {
+            'current_price': 2.20,
+            'yesterday_close': 2.00,
+            'open_price': 2.00,
+            'high_price': 2.25,
+            'low_price': 1.95,
+            'daily_pct': 10.0,
+            'five_day_high': 2.25,
+            'five_day_low': 1.95,
+            'thirty_day_avg': 2.05,
+            'chart_intraday_b64': 'mock_base64',
+            'chart_5d_b64': 'mock_base64',
+        }
+        
+        signal = main.build_rack_signal('RB', data, self.now)
+        self.assertEqual(signal['action'], 'BUY_NOW')
+        self.assertEqual(signal['conviction'], 'High Conviction')
+        
+        risk_text = signal['risk_text']
+        self.assertIn("High Conviction (|Z| >= 1.5)", risk_text)
+        self.assertIn("win rate of 75.0%", risk_text)
+        self.assertIn("average savings of 5.15¢/gal", risk_text)
+        self.assertIn("53%–73%", risk_text)
+        self.assertIn("operational planning floor: 53%", risk_text)
+
+    def test_11_2_ho_wait_low_conviction_formatting(self):
+        import main
+        data = {
+            'current_price': 1.94,
+            'yesterday_close': 2.00,
+            'open_price': 2.00,
+            'high_price': 2.05,
+            'low_price': 1.90,
+            'daily_pct': -3.0,
+            'five_day_high': 2.05,
+            'five_day_low': 1.90,
+            'thirty_day_avg': 2.00,
+            'chart_intraday_b64': 'mock_base64',
+            'chart_5d_b64': 'mock_base64',
+        }
+        
+        signal = main.build_rack_signal('HO', data, self.now)
+        self.assertEqual(signal['action'], 'WAIT')
+        self.assertEqual(signal['conviction'], 'Low Conviction')
+        
+        risk_text = signal['risk_text']
+        self.assertIn("Risk Note", risk_text)
+        self.assertIn("worst 5% of days", risk_text)
+        self.assertIn("standard 8,500-gallon truck", risk_text)
+        self.assertIn("29.78¢/gal", risk_text)
+
+    def test_11_3_ho_insufficient_history_fallback(self):
+        import main
+        data = {
+            'current_price': 2.36,
+            'yesterday_close': 2.00,
+            'open_price': 2.00,
+            'high_price': 2.40,
+            'low_price': 1.98,
+            'daily_pct': 18.0,
+            'five_day_high': 2.40,
+            'five_day_low': 1.98,
+            'thirty_day_avg': 2.10,
+            'chart_intraday_b64': 'mock_base64',
+            'chart_5d_b64': 'mock_base64',
+        }
+        
+        signal = main.build_rack_signal('HO', data, self.now)
+        self.assertEqual(signal['action'], 'BUY_NOW')
+        self.assertEqual(signal['conviction'], 'High Conviction')
+        
+        risk_text = signal['risk_text']
+        self.assertIn("insufficient history", risk_text)
+        self.assertIn("60%–79%", risk_text)
+        self.assertIn("operational planning floor: 60%", risk_text)
+
+    def test_11_4_rendered_html_layout_checks(self):
+        import main
+        rb_data = {
+            'current_price': 2.20,
+            'yesterday_close': 2.00,
+            'open_price': 2.00,
+            'high_price': 2.25,
+            'low_price': 1.95,
+            'daily_pct': 10.0,
+            'five_day_high': 2.25,
+            'five_day_low': 1.95,
+            'thirty_day_avg': 2.05,
+            'chart_intraday_b64': 'mock_base64',
+            'chart_5d_b64': 'mock_base64',
+        }
+        ho_data = {
+            'current_price': 1.94,
+            'yesterday_close': 2.00,
+            'open_price': 2.00,
+            'high_price': 2.05,
+            'low_price': 1.90,
+            'daily_pct': -3.0,
+            'five_day_high': 2.05,
+            'five_day_low': 1.90,
+            'thirty_day_avg': 2.00,
+            'chart_intraday_b64': 'mock_base64',
+            'chart_5d_b64': 'mock_base64',
+        }
+        
+        rb_signal = main.build_rack_signal('RB', rb_data, self.now)
+        ho_signal = main.build_rack_signal('HO', ho_data, self.now)
+        
+        rb_data['rack_signal'] = rb_signal
+        ho_data['rack_signal'] = ho_signal
+        
+        all_data = {'RB': rb_data, 'HO': ho_data}
+        alert_context = {'label': 'Final Verdict'}
+        
+        html, cids = main.build_html_email("Test Subject", all_data, self.now, alert_context)
+        
+        self.assertIn("High Conviction (|Z| >= 1.5)", html)
+        self.assertIn("win rate of 75.0%", html)
+        self.assertIn("53%–73%", html)
+        self.assertIn("operational planning floor: 53%", html)
+        
+        self.assertIn("Risk Note", html)
+        self.assertIn("standard 8,500-gallon truck", html)
+        self.assertIn("29.78¢/gal", html)
+
+
 if __name__ == "__main__":
     unittest.main()

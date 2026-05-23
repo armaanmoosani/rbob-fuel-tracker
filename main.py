@@ -452,15 +452,46 @@ def build_rack_signal(prefix, data, now):
         color = "#64748b"
         instruction = "Do not let this futures move alone drive the truck decision."
 
+    # Build Z-score bin labels for conviction note
+    if abs_z >= 1.5:
+        bin_name = "high"
+        bin_label = "High Conviction (|Z| >= 1.5)"
+    elif abs_z >= 1.0:
+        bin_name = "mod"
+        bin_label = "Moderate Conviction (1.0 <= |Z| < 1.5)"
+    else:
+        bin_name = "low"
+        bin_label = "Low Conviction (|Z| < 1.0)"
+
     # Build quantitative risk context text
     risk_text = ""
     if "BUY" in action:
-        win_rate = APP_CONFIG.get(f"{prefix}_historical_win_rate", 0.70) * 100
-        avg_savings = APP_CONFIG.get(f"{prefix}_average_savings", 0.0)
-        risk_text = f"Conviction Note: In history, similar positive signals led to an actual rack price hike {win_rate:.0f}% of the time, with an average savings of {avg_savings:.2f}¢/gal."
+        if prefix == "RB":
+            baseline_range = "53%–73%"
+            floor = "53%"
+        else:
+            baseline_range = "60%–79%"
+            floor = "60%"
+            
+        win_rate = APP_CONFIG.get(f"{prefix}_{bin_name}_z_win_rate", -1.0)
+        avg_savings = APP_CONFIG.get(f"{prefix}_{bin_name}_z_savings", 0.0)
+        
+        if win_rate >= 0.0:
+            win_rate_pct = win_rate * 100
+            conviction_part = f"similar {bin_label} alerts achieved a win rate of {win_rate_pct:.1f}% with average savings of {avg_savings:.2f}¢/gal"
+        else:
+            conviction_part = f"similar {bin_label} alerts had insufficient history to calculate stable precision"
+            
+        risk_text = (
+            f"Conviction Note: In history, {conviction_part}. "
+            f"(Multi-year baseline range: {baseline_range}; operational planning floor: {floor})."
+        )
     elif "WAIT" in action:
         cvar = APP_CONFIG.get(f"{prefix}_historical_cvar", 3.0)
-        risk_text = f"Risk Note: On the worst 5% of days historically, rack prices spiked +{cvar:.2f}¢/gal (+${cvar * 85:.0f} per 8,500 gal truck)."
+        risk_text = (
+            f"Risk Note: On the worst 5% of days historically, rack prices spiked +{cvar:.2f}¢/gal "
+            f"(+${cvar * 85:.0f} per standard 8,500-gallon truck). Defer purchase only if inventory capacity allows."
+        )
 
     # Immutable Prediction Audit Log (Idempotent)
     try:

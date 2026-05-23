@@ -248,6 +248,73 @@ def run_optimization(df, nymex_col, rack_col, prefix, cfg):
     else:
         cvar_val = 3.0 # default fallback
 
+    # 4. Conviction-conditional metrics computed over the full history
+    conviction_bins = {
+        "high": {"alerts": 0, "correct": 0, "savings": []},
+        "mod": {"alerts": 0, "correct": 0, "savings": []},
+        "low": {"alerts": 0, "correct": 0, "savings": []}
+    }
+    
+    for i in range(opt_W, len(df)):
+        df_train = df.iloc[i - opt_W:i]
+        df_today = df.iloc[i]
+        
+        train_nymex, train_rack = get_clean_deltas(df_train, nymex_col, rack_col)
+        if len(train_nymex) < 20:
+            continue
+        h_t, d_t = train_thresholds(train_nymex, train_rack, opt_Hp, opt_Dp)
+        
+        nymex_std_t = float(train_nymex.std()) if len(train_nymex) > 1 else 1.0
+        
+        ch = df_today['delta_nymex']
+        act = df_today['delta_rack']
+        
+        if pd.isna(ch) or pd.isna(act):
+            continue
+            
+        z = ch / nymex_std_t if nymex_std_t > 0 else 0.0
+        abs_z = abs(z)
+        
+        if abs_z >= 1.5:
+            bin_name = "high"
+        elif abs_z >= 1.0:
+            bin_name = "mod"
+        else:
+            bin_name = "low"
+            
+        triggered = False
+        saved = 0.0
+        is_correct = False
+        
+        if ch >= h_t:
+            triggered = True
+            saved = act
+            is_correct = (act > 0)
+        elif ch <= d_t:
+            triggered = True
+            saved = -act
+            is_correct = (act < 0)
+            
+        if triggered:
+            conviction_bins[bin_name]["alerts"] += 1
+            conviction_bins[bin_name]["savings"].append(saved)
+            if is_correct:
+                conviction_bins[bin_name]["correct"] += 1
+                
+    for bin_name in ["high", "mod", "low"]:
+        b = conviction_bins[bin_name]
+        alerts_count = b["alerts"]
+        if alerts_count >= 20:
+            bin_win_rate = float(b["correct"] / alerts_count)
+            bin_savings = float(np.mean(b["savings"]))
+        else:
+            bin_win_rate = -1.0
+            bin_savings = 0.0
+            
+        cfg[f"{prefix}_{bin_name}_z_win_rate"] = round(bin_win_rate, 4)
+        cfg[f"{prefix}_{bin_name}_z_savings"] = round(bin_savings, 4)
+        cfg[f"{prefix}_{bin_name}_z_count"] = alerts_count
+
     # Save metrics to config
     cfg[f"{prefix}_nymex_daily_std"] = round(nymex_std, 4)
     cfg[f"{prefix}_historical_win_rate"] = round(win_rate, 4)
