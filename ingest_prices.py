@@ -58,7 +58,8 @@ def send_alert_email(subject, body):
         with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
             server.login(GMAIL_USER, GMAIL_APP_PASSWORD)
             server.sendmail(GMAIL_USER, emails, msg.as_string())
-        print(f"Alert email sent to {emails}: {subject}")
+        masked_emails = [(e[:2] + "***" + e[e.find('@'):] if '@' in e else (e[:2] + "***" + e[-2:] if len(e) > 4 else "***")) for e in emails]
+        print(f"Alert email sent to {masked_emails}: {subject}")
     except Exception as e:
         print(f"Failed to send alert email: {e}")
 

@@ -2,6 +2,28 @@ import os
 import smtplib
 from email.mime.text import MIMEText
 
+def mask_recipient(address):
+    if not address:
+        return "None"
+    if isinstance(address, (list, tuple)):
+        return [mask_recipient(x) for x in address]
+    address = str(address)
+    if ',' in address:
+        return [mask_recipient(x.strip()) for x in address.split(',') if x.strip()]
+    if '@' in address:
+        parts = address.split('@')
+        name = parts[0]
+        domain = parts[1]
+        if len(name) <= 3:
+            masked_name = "***"
+        else:
+            masked_name = name[:2] + "***" + name[-1:]
+        return f"{masked_name}@{domain}"
+    else:
+        if len(address) <= 4:
+            return "***"
+        return address[:2] + "***" + address[-2:]
+
 def main():
     email_user = os.environ.get('GMAIL_USER')
     email_pass = os.environ.get('GMAIL_APP_PASSWORD')
@@ -9,10 +31,10 @@ def main():
     to_email = os.environ.get('TO_EMAIL')
 
     print("=== SMS Broadcast Testing Utility ===")
-    print(f"GMAIL_USER: {email_user}")
+    print(f"GMAIL_USER: {mask_recipient(email_user)}")
     print(f"GMAIL_APP_PASSWORD: {'SET' if email_pass else 'NOT SET'}")
-    print(f"PHONE_SMS_ADDRESS: {phone_sms}")
-    print(f"TO_EMAIL: {to_email}")
+    print(f"PHONE_SMS_ADDRESS: {mask_recipient(phone_sms)}")
+    print(f"TO_EMAIL: {mask_recipient(to_email)}")
 
     if not email_user or not email_pass:
         print("Error: Missing GMAIL_USER or GMAIL_APP_PASSWORD.")
@@ -23,18 +45,17 @@ def main():
     if phone_sms:
         phones = [p.strip() for p in phone_sms.split(',') if p.strip()]
     elif to_email:
-        # Fallback to TO_EMAIL if it has the phone numbers
         phones = [p.strip() for p in to_email.split(',') if p.strip()]
 
     if not phones:
         print("Error: No recipient addresses found in PHONE_SMS_ADDRESS or TO_EMAIL.")
         return
 
-    print(f"\nResolved recipients to test: {phones}")
+    print(f"\nResolved recipients to test: {mask_recipient(phones)}")
 
     body = "Test broadcast from Graves Fuel Tracker. If you receive this, multi-number SMS alerts are working!"
     sms_msg = MIMEText(body)
-    sms_msg['Subject'] = ''
+    sms_msg['Subject'] = 'Graves Tracker Test'
     sms_msg['From'] = email_user
 
     try:
@@ -51,9 +72,9 @@ def main():
             else:
                 sms_msg.add_header('To', phone)
                 
-            print(f"Sending to {phone}...")
+            print(f"Sending to {mask_recipient(phone)}...")
             srv.sendmail(email_user, phone, sms_msg.as_string())
-            print(f"Success: Sent to {phone}")
+            print(f"Success: Sent to {mask_recipient(phone)}")
             
         srv.quit()
         print("\nAll test messages sent successfully!")

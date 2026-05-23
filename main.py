@@ -1244,7 +1244,8 @@ def send_sms(all_data, now, alert_context):
         for phone in phones:
             sms_msg.replace_header('To', phone) if 'To' in sms_msg else sms_msg.add_header('To', phone)
             srv.sendmail(GMAIL_USER, phone, sms_msg.as_string())
-            print(f"SMS sent to gateway ({phone})")
+            masked_phone = (phone[:2] + "***" + phone[phone.find('@'):]) if '@' in phone else (phone[:2] + "***" + phone[-2:] if len(phone) > 4 else "***")
+            print(f"SMS sent to gateway ({masked_phone})")
             
         srv.quit()
     except Exception as e:
@@ -1338,7 +1339,8 @@ def send_daily_prompt(now):
         for phone in phones:
             sms_msg.replace_header('To', phone) if 'To' in sms_msg else sms_msg.add_header('To', phone)
             srv.sendmail(GMAIL_USER, phone, sms_msg.as_string())
-            print(f"Daily prompt sent to {phone}")
+            masked_phone = (phone[:2] + "***" + phone[phone.find('@'):]) if '@' in phone else (phone[:2] + "***" + phone[-2:] if len(phone) > 4 else "***")
+            print(f"Daily prompt sent to {masked_phone}")
             
         srv.quit()
         
