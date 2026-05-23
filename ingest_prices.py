@@ -51,7 +51,7 @@ def git_pull_rebase():
 
 def git_commit_push(message):
     try:
-        subprocess.run(["git", "add", "data/graves_history.csv"], check=True)
+        subprocess.run(["git", "add", "data/graves_history.csv", "data/integrity_hashes.csv"], check=True)
         subprocess.run(["git", "commit", "-m", message], check=True)
         subprocess.run(["git", "push"], check=True)
     except subprocess.CalledProcessError as e:
@@ -71,41 +71,43 @@ def extract_price_near_label(text, label):
         return float(match.group(1))
     return None
 
-def check_inbox_for_prices():
+def check_inbox_for_prices(target_date_str):
     if not GRAVES_EMAIL or not GRAVES_APP_PASSWORD:
         print("Missing GRAVES_EMAIL or GRAVES_APP_PASSWORD. Cannot check invoices.")
-        return None, None, False
-        
-    existing_dates = set()
-    if os.path.exists(CSV_PATH):
-        with open(CSV_PATH, "r") as f:
-            for line in f:
-                parts = line.strip().split(',')
-                if parts and parts[0]:
-                    existing_dates.add(parts[0])
+        return None, None
         
     try:
         mail = imaplib.IMAP4_SSL("imap.gmail.com")
         mail.login(GRAVES_EMAIL, GRAVES_APP_PASSWORD)
         mail.select('"[Gmail]/All Mail"')
         
-        # Look back 1 day to handle the case where the job runs exactly at midnight
-        yesterday = (datetime.now(TZ) - timedelta(days=1)).strftime("%d-%b-%Y")
+        # Look back 2 days to handle any timezone/date boundary differences
+        since_date = (datetime.now(TZ) - timedelta(days=2)).strftime("%d-%b-%Y")
         
         # Hyper-specific, non-invasive search query that ignores UNSEEN status so you can read them yourself
-        search_query = f'(FROM "donotreply@gravesoil.com" SUBJECT "Latest prices from Graves Oil Company" SINCE "{yesterday}")'
+        search_query = f'(FROM "donotreply@gravesoil.com" SUBJECT "Latest prices from Graves Oil Company" SINCE "{since_date}")'
         status, messages = mail.search(None, search_query)
         
         if status != "OK" or not messages[0]:
-            return None, None, False
+            return None, None
 
         # Process the most recent email first
         for num in reversed(messages[0].split()):
             try:
                 status, data = mail.fetch(num, '(RFC822)')
                 msg = email.message_from_bytes(data[0][1])
-                body = ""
                 
+                # Verify that the email belongs to the target date
+                import email.utils
+                email_date = email.utils.parsedate_to_datetime(msg.get('Date'))
+                if not email_date:
+                    continue
+                local_date_str = email_date.astimezone(TZ).date().isoformat()
+                
+                if local_date_str != target_date_str:
+                    continue
+
+                body = ""
                 if msg.is_multipart():
                     for part in msg.walk():
                         ctype = part.get_content_type()
@@ -128,21 +130,15 @@ def check_inbox_for_prices():
                     prices.append(p)
                     
                 if len(prices) == 3:
-                    import email.utils
-                    email_date = email.utils.parsedate_to_datetime(msg.get('Date'))
-                    local_date_str = email_date.astimezone(TZ).date().isoformat()
-                    if local_date_str in existing_dates:
-                        print(f"Email date {local_date_str} already in CSV. Skipping.")
-                        return local_date_str, tuple(prices), True
-                    return local_date_str, tuple(prices), False
+                    return local_date_str, tuple(prices)
             except Exception as loop_e:
                 print(f"Skipping badly formatted email {num}: {loop_e}")
                 continue
 
-        return None, None, False
+        return None, None
     except Exception as e:
         print(f"IMAP Error: {e}")
-        return None, None, False
+        return None, None
 
 def read_daily_settlement(target_date_str):
     if not os.path.exists(DS_PATH):
@@ -156,25 +152,57 @@ def read_daily_settlement(target_date_str):
 def main():
     print("Starting SMS ingest...")
     validate_data.validate_all(DATA_DIR)
-    date_str, prices, already_ingested = check_inbox_for_prices()
     
-    if already_ingested:
-        print("Prices already ingested. Exiting silently.")
+    # Calculate target date based on Chicago timezone local hour
+    now_local = datetime.now(TZ)
+    if now_local.hour < 4:
+        target_date_str = (now_local - timedelta(days=1)).date().isoformat()
+    else:
+        target_date_str = now_local.date().isoformat()
+        
+    print(f"Target date determined: {target_date_str} (local hour: {now_local.hour})")
+    
+    # Check if target date is a weekend (5 = Saturday, 6 = Sunday)
+    target_dt = datetime.fromisoformat(target_date_str)
+    if target_dt.weekday() in (5, 6):
+        print(f"Target date {target_date_str} is weekend. Graves Oil is closed. Exiting silently.")
         sys.exit(0)
         
+    # Read CSV to check for existing date (idempotency check)
+    existing_dates = set()
+    if os.path.exists(CSV_PATH):
+        with open(CSV_PATH, "r") as f:
+            for line in f:
+                parts = line.strip().split(',')
+                if parts and parts[0]:
+                    existing_dates.add(parts[0])
+                    
+    if target_date_str in existing_dates:
+        print(f"Prices for {target_date_str} already ingested. Exiting silently.")
+        sys.exit(0)
+        
+    # Query inbox for target date's email
+    date_str, prices = check_inbox_for_prices(target_date_str)
+    
     if not prices:
-        today = datetime.now(TZ)
-        if today.weekday() in (5, 6): # 5 = Saturday, 6 = Sunday
-            print("Today is weekend. Graves Oil is closed. Exiting silently.")
-            sys.exit(0)
-            
-        print("No valid SMS reply found.")
-        send_alert_email("WARNING: Graves Oil Prices Missing", "No Graves Oil prices received today. Please reply to the SMS with the prices (e.g. 2.10 2.30 2.50).")
+        # Determine retry vs. warning behavior
+        current_hour = now_local.hour
+        is_final_check = (current_hour == 0) or (current_hour < 4)
+        is_manual = os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
+        
+        print(f"No valid price email found for {target_date_str}.")
+        if is_final_check or is_manual:
+            send_alert_email(
+                "WARNING: Graves Oil Prices Missing",
+                f"No Graves Oil prices received today for {target_date_str} by midnight. Please check Graves Oil email/website manually."
+            )
+        else:
+            print(f"Prices missing at hour {current_hour}. Will retry on next scheduled run.")
         sys.exit(0)
 
     print(f"Found prices for {date_str}: Unleaded={prices[0]}, Premium={prices[1]}, Diesel={prices[2]}")
     
-    # Read CSV to check for duplicates
+    # Read CSV to check for duplicates (double check)
     if os.path.exists(CSV_PATH):
         with open(CSV_PATH, "r") as f:
             lines = f.readlines()

@@ -2,7 +2,7 @@ name: Daily Price Ingestion
 
 on:
   schedule:
-    - cron: '30 4 * * *' # Runs at 4:30 AM UTC (11:30 PM CT)
+    - cron: '0 1,2,3,4,5,6 * * *' # Runs hourly from 8:00 PM to 12:00 AM CT to retry ingestion
   workflow_dispatch:
 
 jobs:
