@@ -11,6 +11,7 @@ from datetime import datetime
 import json
 import validate_data
 from scipy.stats import norm
+import pytz
 
 def mann_kendall_test(x):
     n = len(x)
@@ -42,6 +43,7 @@ DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 REPORTS_DIR = os.path.join(os.path.dirname(__file__), "reports")
 LOG_PATH = os.path.join(DATA_DIR, "prediction_log.csv")
 CSV_PATH = os.path.join(DATA_DIR, "graves_history.csv")
+TZ = pytz.timezone('America/Chicago')
 
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
@@ -94,27 +96,26 @@ def main():
         print("No resolved predictions yet.")
         return
     
-    total_alerts = len(df)
+    df['timestamp_dt'] = pd.to_datetime(df['timestamp'], format='ISO8601')
+    df = df.sort_values('timestamp_dt').copy()
+
+    # Pre-calculate active alert metrics
     correct_hikes = 0
     correct_drops = 0
     false_flat = 0
     false_wrong_dir = 0
     missed_moves = 0
-    cumulative_savings_cents = 0.0
-    savings_history = []
+    
+    savings_list = []
     correct_list = []
     
     for idx, row in df.iterrows():
         pred = row['predicted_direction']
         actual = row['actual_move']
         
-        # Savings logic: 
-        # If we predicted HIKE, we bought today. If actual > 0, we saved money. If actual < 0, we lost money.
-        # If we predicted DROP, we waited. If actual < 0, we saved money. If actual > 0, we lost money.
-        # If we predicted FLAT, we didn't text the user (no alert).
-        
         saved = 0.0
         is_correct = False
+        
         if pred == 'HIKE':
             saved = actual
             if actual > 0:
@@ -133,31 +134,110 @@ def main():
                 false_flat += 1
             else:
                 false_wrong_dir += 1
-        else:
-            # Predicted FLAT.
+        else: # FLAT
             if abs(actual) > 0:
                 missed_moves += 1
                 
-        cumulative_savings_cents += saved
-        savings_history.append(cumulative_savings_cents)
+        savings_list.append(saved)
         correct_list.append(is_correct)
-
-    df['cumulative_savings'] = savings_history
+        
+    df['savings_cents'] = savings_list
     df['is_correct'] = correct_list
+    df['cumulative_savings'] = df['savings_cents'].cumsum()
     
-    # Calculate dollar savings based on 8,500 gallon delivery truck size
+    # Correct total active alerts count (only HIKE and DROP signals)
+    df_alerts = df[df['predicted_direction'].isin(['HIKE', 'DROP'])].copy()
+    total_active_alerts = len(df_alerts)
+    
+    # Lifetime metrics
+    lifetime_precision = (df_alerts['is_correct'].sum() / total_active_alerts * 100) if total_active_alerts > 0 else 0.0
+    lifetime_savings_cents = df_alerts['savings_cents'].sum()
+    avg_savings_per_active_alert_cents = (lifetime_savings_cents / total_active_alerts) if total_active_alerts > 0 else 0.0
+    
     TRUCK_GALLONS = 8500
-    cumulative_savings_dollars = (cumulative_savings_cents / 100.0) * TRUCK_GALLONS
+    lifetime_savings_dollars = (lifetime_savings_cents / 100.0) * TRUCK_GALLONS
+    avg_savings_per_truck_dollars = (avg_savings_per_active_alert_cents / 100.0) * TRUCK_GALLONS
     
+    # Weekly metrics (Last 7 days activity)
+    tz_chicago = pytz.timezone('America/Chicago')
+    now_chicago = pd.Timestamp.now(tz=tz_chicago)
+    cutoff_7d = now_chicago - pd.Timedelta(days=7)
+    
+    # Filter resolved predictions in the last 7 calendar days
+    df_week = df[df['timestamp_dt'] >= cutoff_7d].copy()
+    df_week_alerts = df_week[df_week['predicted_direction'].isin(['HIKE', 'DROP'])].copy()
+    
+    week_active_fired = len(df_week_alerts)
+    week_correct = df_week_alerts['is_correct'].sum() if week_active_fired > 0 else 0
+    week_precision = (week_correct / week_active_fired * 100) if week_active_fired > 0 else 0.0
+    week_savings_cents = df_week_alerts['savings_cents'].sum() if week_active_fired > 0 else 0.0
+    week_savings_dollars = (week_savings_cents / 100.0) * TRUCK_GALLONS
+
+    # Format Recent Resolved Alerts Log for last 7 days
+    recent_alerts_html = ""
+    if len(df_week) == 0:
+        recent_alerts_html = "<tr><td colspan='6' style='text-align: center; padding: 16px; color: #64748b; font-size: 13px;'>No alerts resolved in the last 7 days.</td></tr>"
+    else:
+        # Sort newest first
+        df_week_sorted = df_week.sort_values('timestamp_dt', ascending=False)
+        for idx, row in df_week_sorted.iterrows():
+            date_str = row['timestamp_dt'].strftime("%Y-%m-%d")
+            comm_label = "Gas (RBOB)" if row['commodity'] == 'RB' else "Diesel (HO)"
+            
+            # Signal
+            pred = row['predicted_direction']
+            if pred == 'HIKE':
+                sig_html = "<span style='color: #22c55e; font-weight: bold;'>BUY (Hike)</span>"
+            elif pred == 'DROP':
+                sig_html = "<span style='color: #f59e0b; font-weight: bold;'>WAIT (Drop)</span>"
+            else:
+                sig_html = "<span style='color: #64748b;'>FLAT (None)</span>"
+                
+            # Actual Move
+            act_move = row['actual_move']
+            act_move_str = f"{act_move:+.2f}¢/gal"
+            
+            # Result
+            if pred == 'FLAT':
+                res_str = "Flat (Suppressed)"
+                res_color = "#64748b"
+            else:
+                if row['is_correct']:
+                    res_str = "Correct"
+                    res_color = "#16a34a"
+                else:
+                    res_str = "False Alarm"
+                    res_color = "#ef4444"
+            res_html = f"<span style='color: {res_color}; font-weight: 500;'>{res_str}</span>"
+            
+            # Savings
+            sav_val = row['savings_cents']
+            if pred == 'FLAT':
+                sav_str = "—"
+                sav_color = "#64748b"
+            else:
+                sav_str = f"{sav_val:+.2f}¢/gal"
+                sav_color = "#16a34a" if sav_val >= 0 else "#ef4444"
+            sav_html = f"<span style='color: {sav_color}; font-weight: bold;'>{sav_str}</span>"
+            
+            recent_alerts_html += f"""
+            <tr style="border-bottom: 1px solid #e2e8f0;">
+                <td style="padding: 10px 8px; color: #475569; font-size: 13px;">{date_str}</td>
+                <td style="padding: 10px 8px; color: #475569; font-size: 13px;">{comm_label}</td>
+                <td style="padding: 10px 8px; font-size: 13px;">{sig_html}</td>
+                <td style="padding: 10px 8px; color: #475569; font-size: 13px;">{act_move_str}</td>
+                <td style="padding: 10px 8px; font-size: 13px;">{res_html}</td>
+                <td style="padding: 10px 8px; font-size: 13px; text-align: right;">{sav_html}</td>
+            </tr>
+            """
+            
     # Check if we have 90 days of prediction history
-    df['timestamp_dt'] = pd.to_datetime(df['timestamp'], format='ISO8601')
     if len(df) > 0:
         has_90d_history = (df['timestamp_dt'].max() - df['timestamp_dt'].min()) >= pd.Timedelta(days=90)
     else:
         has_90d_history = False
 
     # Filter to active alerts (HIKE/DROP) for rolling precision calculation
-    df_alerts = df[df['predicted_direction'].isin(['HIKE', 'DROP'])].copy()
     if has_90d_history and len(df_alerts) > 0:
         rolling_precisions = []
         for i, row in df_alerts.iterrows():
@@ -257,6 +337,7 @@ def main():
         
     p_value = 1.0
     p_value_note = "Model significance could not be computed (insufficient resolved predictions)."
+    p_value_str = "N/A"
     
     if len(df_sig) >= 5:
         real_sig_savings = 0.0
@@ -285,31 +366,59 @@ def main():
                     sh_sav += -sh_act
             perm_savings.append(sh_sav)
             
-        p_value = float(np.mean(np.array(perm_savings) >= real_sig_savings))
+        better_trials = np.sum(np.array(perm_savings) >= real_sig_savings)
+        p_value = float((better_trials + 1) / (n_perm + 1))
         
         if p_value < 0.05:
-            p_value_note = f"The model shows a statistically significant trading edge (p = {p_value:.3f} < 0.05). This means there is less than a 5% probability that these savings were achieved by random chance."
+            if p_value < 0.001:
+                p_value_str = "p < 0.001"
+                p_value_note = "The model shows a highly significant trading edge (p < 0.001). This means there is less than a 0.1% probability that these savings were achieved by random chance."
+            else:
+                p_value_str = f"p = {p_value:.3f}"
+                p_value_note = f"The model shows a statistically significant trading edge (p = {p_value:.3f} < 0.05). This means there is less than a 5% probability that these savings were achieved by random chance."
         else:
+            p_value_str = f"p = {p_value:.3f}"
             p_value_note = f"The model significance is within normal bounds (p = {p_value:.3f} >= 0.05). This suggests that recent price moves contain more noise; continue to monitor performance parameters."
 
-    # Plotting
+    # Plotting (Cropped to last 90 days for clarity)
+    plot_cutoff = pd.Timestamp.now(tz='America/Chicago') - pd.Timedelta(days=90)
+    df_plot = df[df['timestamp_dt'] >= plot_cutoff].copy()
+    if len(df_plot) < 10:
+        df_plot = df.tail(60).copy()
+        
+    df_plot = df_plot.sort_values('timestamp_dt').copy()
+    df_plot['plot_savings'] = df_plot['savings_cents'].cumsum()
+    
+    df_alerts_plot = df_alerts[df_alerts['timestamp_dt'] >= df_plot['timestamp_dt'].min()].copy()
+
     fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), sharex=False)
     fig.patch.set_facecolor('#ffffff')
     ax1.set_facecolor('#f8fafc')
     ax2.set_facecolor('#f8fafc')
     
-    # Plot actual savings
-    dates = [d.split('T')[0] for d in df['timestamp']]
-    ax1.plot(dates, savings_history, marker='o', markersize=6, label='Cumulative Savings', color='#22c55e', linewidth=2.5)
+    # Plot recent cumulative savings
+    plot_dates = [d.strftime("%Y-%m-%d") for d in df_plot['timestamp_dt']]
+    ax1.plot(plot_dates, df_plot['plot_savings'], marker='o', markersize=4, label='Cumulative Savings (¢/gal)', color='#22c55e', linewidth=2.5)
     
-    # Rolling trend (rolling 5 alerts)
-    if len(df) >= 5:
-        trend = df['cumulative_savings'].rolling(window=5, min_periods=1).mean()
-        ax1.plot(dates, trend, linestyle='--', color='#3b82f6', linewidth=2, label='Rolling Trend (5 alerts)')
+    # Rolling trend (rolling 5 active alerts)
+    df_alerts_window = df_plot[df_plot['predicted_direction'].isin(['HIKE', 'DROP'])].copy()
+    if len(df_alerts_window) >= 5:
+        trend = df_alerts_window['plot_savings'].rolling(window=5, min_periods=1).mean()
+        trend_dates = [d.strftime("%Y-%m-%d") for d in df_alerts_window['timestamp_dt']]
+        ax1.plot(trend_dates, trend, linestyle='--', color='#3b82f6', linewidth=2, label='Rolling Trend (5 alerts)')
 
     ax1.axhline(0, color='#94a3b8', linestyle='-', linewidth=1.2)
-    ax1.set_title('Cumulative Expected Savings (¢/gal)', fontsize=13, fontweight='bold', color='#1e293b', pad=10)
+    ax1.set_title('Expected Savings in Last 90 Days (¢/gal)', fontsize=13, fontweight='bold', color='#1e293b', pad=10)
     ax1.set_ylabel('Cents per Gallon Saved', fontsize=10, color='#475569')
+    
+    if len(plot_dates) > 10:
+        xticks_indices = np.linspace(0, len(plot_dates) - 1, 10, dtype=int)
+        ax1.set_xticks(xticks_indices)
+        ax1.set_xticklabels([plot_dates[i] for i in xticks_indices], rotation=15)
+    else:
+        ax1.set_xticks(range(len(plot_dates)))
+        ax1.set_xticklabels(plot_dates, rotation=15)
+        
     ax1.tick_params(colors='#64748b', labelsize=9)
     for spine in ax1.spines.values():
         spine.set_color('#e2e8f0')
@@ -317,14 +426,22 @@ def main():
     ax1.legend(frameon=True, facecolor='#ffffff', edgecolor='#e2e8f0', fontsize=9)
     
     # Bottom Subplot: Rolling 90-Day Alert Precision (%)
-    if has_90d_history and len(df_alerts) > 0:
-        alert_dates = [d.split('T')[0] for d in df_alerts['timestamp']]
-        ax2.plot(alert_dates, df_alerts['rolling_precision'], marker='s', markersize=6, label='90-Day Rolling Precision', color='#8b5cf6', linewidth=2.5)
-        # Draw dotted floor guidelines (53% for RBOB, 60% for HO)
+    if has_90d_history and len(df_alerts_plot) > 0:
+        alert_plot_dates = [d.strftime("%Y-%m-%d") for d in df_alerts_plot['timestamp_dt']]
+        ax2.plot(alert_plot_dates, df_alerts_plot['rolling_precision'], marker='s', markersize=4, label='90-Day Rolling Precision', color='#8b5cf6', linewidth=2.5)
         ax2.axhline(53, color='#ef4444', linestyle=':', linewidth=1.5, label='RBOB Floor (53%)')
         ax2.axhline(60, color='#f97316', linestyle=':', linewidth=1.5, label='HO Floor (60%)')
         ax2.set_ylabel('Precision (%)', fontsize=10, color='#475569')
         ax2.set_ylim(0, 105)
+        
+        if len(alert_plot_dates) > 10:
+            xticks_indices_2 = np.linspace(0, len(alert_plot_dates) - 1, 10, dtype=int)
+            ax2.set_xticks(xticks_indices_2)
+            ax2.set_xticklabels([alert_plot_dates[i] for i in xticks_indices_2], rotation=15)
+        else:
+            ax2.set_xticks(range(len(alert_plot_dates)))
+            ax2.set_xticklabels(alert_plot_dates, rotation=15)
+            
         ax2.tick_params(colors='#64748b', labelsize=9)
         for spine in ax2.spines.values():
             spine.set_color('#e2e8f0')
@@ -345,8 +462,6 @@ def main():
     
     plt.tight_layout()
     
-    import pytz
-    TZ = pytz.timezone('America/Chicago')
     report_date = datetime.now(TZ).strftime("%Y-%m-%d")
     chart_filename = f"report_{report_date}.png"
     chart_path = os.path.join(REPORTS_DIR, chart_filename)
@@ -408,26 +523,93 @@ def main():
                         <!-- Content -->
                         <tr>
                             <td style="padding: 32px 24px;">
-                                <!-- KPI Cards (Outlook safe using 100% table layout) -->
+                                
+                                <!-- WEEKLY ACTIVITY SECTION -->
+                                <h2 style="color: #0f172a; font-size: 18px; margin: 0 0 16px 0; font-weight: 600; border-bottom: 2px solid #3b82f6; padding-bottom: 6px;">This Week's Activity (Last 7 Days)</h2>
                                 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 24px;">
                                     <tr>
-                                        <td width="48%" align="center" style="background-color: #f8fafc; padding: 16px; border-radius: 6px; border: 1px solid #e2e8f0;">
-                                            <div style="color: #64748b; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Cumulative Savings</div>
-                                            <div style="color: #22c55e; font-size: 24px; font-weight: 700; margin-top: 8px; line-height: 1.1;">{cumulative_savings_cents:+.2f} &cent;/gal</div>
-                                            <div style="color: #16a34a; font-size: 13px; font-weight: 600; margin-top: 4px;">(${cumulative_savings_dollars:,.2f} per truck)*</div>
+                                        <td width="31%" align="center" style="background-color: #f8fafc; padding: 14px 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                                            <div style="color: #64748b; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Alerts Fired</div>
+                                            <div style="color: #0f172a; font-size: 20px; font-weight: 700; margin-top: 6px;">{week_active_fired}</div>
                                         </td>
-                                        <td width="4%"></td>
-                                        <td width="48%" align="center" style="background-color: #f8fafc; padding: 16px; border-radius: 6px; border: 1px solid #e2e8f0;">
-                                            <div style="color: #64748b; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Total Alerts Fired</div>
-                                            <div style="color: #0f172a; font-size: 24px; font-weight: 700; margin-top: 8px; line-height: 1.1;">{total_alerts}</div>
-                                            <div style="color: #64748b; font-size: 12px; font-weight: 500; margin-top: 4px;">active recommendations</div>
+                                        <td width="3%"></td>
+                                        <td width="32%" align="center" style="background-color: #f8fafc; padding: 14px 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                                            <div style="color: #64748b; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Weekly Precision</div>
+                                            <div style="color: #3b82f6; font-size: 20px; font-weight: 700; margin-top: 6px;">{week_precision:.1f}%</div>
+                                        </td>
+                                        <td width="3%"></td>
+                                        <td width="31%" align="center" style="background-color: #f8fafc; padding: 14px 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
+                                            <div style="color: #64748b; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Weekly Savings</div>
+                                            <div style="color: #22c55e; font-size: 20px; font-weight: 700; margin-top: 6px;">{week_savings_cents:+.2f}¢</div>
+                                            <div style="color: #16a34a; font-size: 11px; font-weight: 600; margin-top: 2px;">(${week_savings_dollars:,.2f}/tk)*</div>
                                         </td>
                                     </tr>
                                 </table>
-                                
-                                <p style="margin: 0 0 24px 0; font-size: 11px; color: #94a3b8; font-style: italic;">
-                                    *Assumes a standard 8,500 gallon capacity delivery truck per alert day.
-                                </p>
+
+                                <!-- RECENT ALERTS LOG TABLE -->
+                                <h3 style="color: #334155; font-size: 14px; margin: 20px 0 8px 0; font-weight: 600;">Recent Resolved Alerts Log</h3>
+                                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 28px; border-collapse: collapse;">
+                                    <thead>
+                                        <tr style="background-color: #f8fafc; border-bottom: 2px solid #e2e8f0; text-align: left;">
+                                            <th style="padding: 8px; color: #475569; font-size: 11px; font-weight: 600; text-transform: uppercase;">Date</th>
+                                            <th style="padding: 8px; color: #475569; font-size: 11px; font-weight: 600; text-transform: uppercase;">Commodity</th>
+                                            <th style="padding: 8px; color: #475569; font-size: 11px; font-weight: 600; text-transform: uppercase;">Signal</th>
+                                            <th style="padding: 8px; color: #475569; font-size: 11px; font-weight: 600; text-transform: uppercase;">Actual Move</th>
+                                            <th style="padding: 8px; color: #475569; font-size: 11px; font-weight: 600; text-transform: uppercase;">Result</th>
+                                            <th style="padding: 8px; color: #475569; font-size: 11px; font-weight: 600; text-transform: uppercase; text-align: right;">Savings</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {recent_alerts_html}
+                                    </tbody>
+                                </table>
+
+                                <!-- LIFETIME PERFORMANCE SECTION -->
+                                <h2 style="color: #0f172a; font-size: 18px; margin: 24px 0 16px 0; font-weight: 600; border-bottom: 2px solid #10b981; padding-bottom: 6px;">Lifetime Model Calibration Performance</h2>
+                                <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 12px;">
+                                    <tr>
+                                        <td width="48%" align="center" style="background-color: #f8fafc; padding: 14px; border-radius: 6px; border: 1px solid #e2e8f0; margin-bottom: 12px; display: inline-block; vertical-align: top; width: 44%;">
+                                            <div style="color: #64748b; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Alerts Fired</div>
+                                            <div style="color: #0f172a; font-size: 22px; font-weight: 700; margin-top: 6px;">{total_active_alerts}</div>
+                                            <div style="color: #64748b; font-size: 11px; margin-top: 2px;">active alerts (excl. flat)</div>
+                                        </td>
+                                        <td width="4%"></td>
+                                        <td width="48%" align="center" style="background-color: #f8fafc; padding: 14px; border-radius: 6px; border: 1px solid #e2e8f0; margin-bottom: 12px; display: inline-block; vertical-align: top; width: 44%;">
+                                            <div style="color: #64748b; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Model Precision</div>
+                                            <div style="color: #10b981; font-size: 22px; font-weight: 700; margin-top: 6px;">{lifetime_precision:.1f}%</div>
+                                            <div style="color: #64748b; font-size: 11px; margin-top: 2px;">correct recommendations</div>
+                                        </td>
+                                    </tr>
+                                    <tr style="height: 12px;"><td></td></tr>
+                                    <tr>
+                                        <td width="48%" align="center" style="background-color: #f8fafc; padding: 14px; border-radius: 6px; border: 1px solid #e2e8f0; display: inline-block; vertical-align: top; width: 44%;">
+                                            <div style="color: #64748b; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Avg Savings / Active Alert</div>
+                                            <div style="color: #10b981; font-size: 22px; font-weight: 700; margin-top: 6px;">{avg_savings_per_active_alert_cents:+.2f}¢/gal</div>
+                                            <div style="color: #16a34a; font-size: 11px; font-weight: 600; margin-top: 2px;">(${avg_savings_per_truck_dollars:,.2f} per truck)*</div>
+                                        </td>
+                                        <td width="4%"></td>
+                                        <td width="48%" align="center" style="background-color: #f8fafc; padding: 14px; border-radius: 6px; border: 1px solid #e2e8f0; display: inline-block; vertical-align: top; width: 44%;">
+                                            <div style="color: #64748b; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Hypothetical Cum. Savings</div>
+                                            <div style="color: #22c55e; font-size: 22px; font-weight: 700; margin-top: 6px;">{lifetime_savings_cents:+.2f}¢/gal</div>
+                                            <div style="color: #16a34a; font-size: 11px; font-weight: 600; margin-top: 2px;">(${lifetime_savings_dollars:,.2f} total)*</div>
+                                        </td>
+                                    </tr>
+                                </table>
+
+                                <!-- EXECUTION DISCLAIMER & BENCHMARK NOTE -->
+                                <table width="100%" cellpadding="12" cellspacing="0" border="0" style="background-color: #fffbeb; border-left: 4px solid #f59e0b; border-right: 1px solid #fef3c7; border-top: 1px solid #fef3c7; border-bottom: 1px solid #fef3c7; border-radius: 4px; margin-bottom: 28px;">
+                                    <tr>
+                                        <td>
+                                            <p style="margin: 0; font-size: 12px; color: #b45309; font-weight: bold; text-transform: uppercase; letter-spacing: 0.03em;">
+                                                * Execution Benchmark Disclaimer
+                                            </p>
+                                            <p style="margin: 6px 0 0 0; font-size: 11px; color: #b45309; line-height: 1.4;">
+                                                Because the model does not access your actual purchasing invoices, savings are modeled assuming a baseline of buying or waiting exactly one standard 8,500 gallon capacity delivery truck per active alert. 
+                                                <strong>To find your actual realized savings:</strong> multiply your actual delivery volume (in gallons) by the <strong>Average Savings per Active Alert ({avg_savings_per_active_alert_cents:+.2f}&cent;/gal)</strong> for the alerts you choose to act on.
+                                            </p>
+                                        </td>
+                                    </tr>
+                                </table>
 
                                 <!-- Significance -->
                                 <h3 style="color: #334155; font-size: 16px; margin: 24px 0 12px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; font-weight: 600;">Model Significance ({sig_period_str})</h3>
@@ -435,7 +617,7 @@ def main():
                                     <tr>
                                         <td>
                                             <p style="margin: 0; font-size: 13px; color: #0f172a; font-weight: 700;">
-                                                Permutation P-Value: {p_value:.3f}
+                                                Permutation P-Value: {p_value_str}
                                             </p>
                                             <p style="margin: 6px 0 0 0; font-size: 12px; color: #475569; line-height: 1.5;">
                                                 {p_value_note}
@@ -468,7 +650,7 @@ def main():
                                 </table>
 
                                 <!-- Confusion Matrix -->
-                                <h3 style="color: #334155; font-size: 16px; margin: 0 0 16px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; font-weight: 600;">Prediction Confusion Matrix</h3>
+                                <h3 style="color: #334155; font-size: 16px; margin: 0 0 16px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; font-weight: 600;">Prediction Confusion Matrix (Lifetime)</h3>
                                 <table width="100%" cellpadding="0" cellspacing="0" border="0" style="margin-bottom: 32px; font-size: 14px;">
                                     <tr style="border-bottom: 1px solid #f1f5f9;">
                                         <td style="padding: 12px 0; color: #475569;">Correct Hikes Predicted <span style="color: #94a3b8; font-size: 12px;">(Saved money)</span></td>
@@ -493,11 +675,11 @@ def main():
                                 </table>
 
                                 <!-- Chart -->
-                                <h3 style="color: #334155; font-size: 16px; margin: 0 0 16px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; font-weight: 600;">Performance Trend</h3>
+                                <h3 style="color: #334155; font-size: 16px; margin: 0 0 16px 0; border-bottom: 2px solid #e2e8f0; padding-bottom: 8px; font-weight: 600;">Recent Performance Trends (Last 90 Days)</h3>
                                 <table width="100%" cellpadding="0" cellspacing="0" border="0">
                                     <tr>
                                         <td align="center" style="border: 1px solid #e2e8f0; border-radius: 6px; padding: 12px; background-color: #f8fafc;">
-                                            <img src="cid:chart_img" style="width: 100%; max-width: 550px; height: auto; display: block;" alt="Cumulative Savings Chart" />
+                                            <img src="cid:chart_img" style="width: 100%; max-width: 550px; height: auto; display: block;" alt="Recent Savings and Precision Chart" />
                                         </td>
                                     </tr>
                                 </table>
