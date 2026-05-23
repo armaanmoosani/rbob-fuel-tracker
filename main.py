@@ -1229,79 +1229,82 @@ def send_sms(all_data, now, alert_context):
     else:
         alert_type = 'UPDATE'
 
-    lines = [f"{alert_type}"]
-    lines.append("")
-    
-    if alert_context.get('label') == 'Final Verdict':
-        lines.append("FINAL VERDICT:")
-        rb = all_data.get('RB')
-        ho = all_data.get('HO')
-        
-        if rb and rb.get('rack_signal'):
-            signal = rb['rack_signal']
-            if signal.get('change_cents') is not None:
-                lines.append(f"Gas: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
-                if signal.get('conviction'):
-                    lines.append(f"  Conviction: {signal['conviction']}")
-                if signal.get('risk_text'):
-                    lines.append(f"  {signal['risk_text']}")
-            
-        if ho and ho.get('rack_signal'):
-            signal = ho['rack_signal']
-            if signal.get('change_cents') is not None:
-                lines.append(f"Diesel: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
-                if signal.get('conviction'):
-                    lines.append(f"  Conviction: {signal['conviction']}")
-                if signal.get('risk_text'):
-                    lines.append(f"  {signal['risk_text']}")
-            
+    if alert_context.get('label') == 'HEARTBEAT':
+        body = f"HEARTBEAT\n\nSystem heartbeat: Fuel Tracker is active and operational. SMS gateway is functional.\n\n{time_str}"
+    else:
+        lines = [f"{alert_type}"]
         lines.append("")
-    
-    for prefix in ['RB', 'HO']:
-        if prefix in all_data:
-            info = all_data[prefix]
-            cname = COMMODITIES[prefix]['display_name']
-            pct_sign  = '+' if info['daily_pct'] >= 0 else ''
+        
+        if alert_context.get('label') == 'Final Verdict':
+            lines.append("FINAL VERDICT:")
+            rb = all_data.get('RB')
+            ho = all_data.get('HO')
             
-            lines.append(f"{cname}")
-            baseline_price = info.get('yesterday_close') or info['open_price']
-            dollar_chg = info['current_price'] - baseline_price
-            dollar_str = f"+${dollar_chg:.4f}" if dollar_chg >= 0 else f"-${abs(dollar_chg):.4f}"
-            lines.append(f"Now: ${info['current_price']:.4f} ({pct_sign}{info['daily_pct']:.2f}% | {dollar_str})")
-            
-            if info['high_price'] > 0 and info['low_price'] > 0:
-                lines.append(f"H: ${info['high_price']:.4f} | L: ${info['low_price']:.4f}")
+            if rb and rb.get('rack_signal'):
+                signal = rb['rack_signal']
+                if signal.get('change_cents') is not None:
+                    lines.append(f"Gas: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
+                    if signal.get('conviction'):
+                        lines.append(f"  Conviction: {signal['conviction']}")
+                    if signal.get('risk_text'):
+                        lines.append(f"  {signal['risk_text']}")
                 
-            sma3 = info.get('sma_3')
-            sma10 = info.get('sma_10')
-            if sma3 and sma10:
-                if sma3 > sma10:
-                    lines.append("Mom: Bullish (Consider Buy)")
-                else:
-                    lines.append("Mom: Bearish (Consider Wait)")
+            if ho and ho.get('rack_signal'):
+                signal = ho['rack_signal']
+                if signal.get('change_cents') is not None:
+                    lines.append(f"Diesel: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
+                    if signal.get('conviction'):
+                        lines.append(f"  Conviction: {signal['conviction']}")
+                    if signal.get('risk_text'):
+                        lines.append(f"  {signal['risk_text']}")
+                
+            lines.append("")
+        
+        for prefix in ['RB', 'HO']:
+            if prefix in all_data:
+                info = all_data[prefix]
+                cname = COMMODITIES[prefix]['display_name']
+                pct_sign  = '+' if info['daily_pct'] >= 0 else ''
+                
+                lines.append(f"{cname}")
+                baseline_price = info.get('yesterday_close') or info['open_price']
+                dollar_chg = info['current_price'] - baseline_price
+                dollar_str = f"+${dollar_chg:.4f}" if dollar_chg >= 0 else f"-${abs(dollar_chg):.4f}"
+                lines.append(f"Now: ${info['current_price']:.4f} ({pct_sign}{info['daily_pct']:.2f}% | {dollar_str})")
+                
+                if info['high_price'] > 0 and info['low_price'] > 0:
+                    lines.append(f"H: ${info['high_price']:.4f} | L: ${info['low_price']:.4f}")
                     
-            lines.append("")
-            
-    if 'RB' in all_data and 'HO' in all_data and 'CL' in all_data:
-        rb = all_data['RB']
-        ho = all_data['HO']
-        cl = all_data['CL']
-        if rb['current_price'] and ho['current_price'] and cl['current_price']:
-            crack = (rb['current_price'] * 28) + (ho['current_price'] * 14) - cl['current_price']
-            lines.append(f"CRACK SPREAD: ${crack:.2f}/bbl")
-            if rb['yesterday_close'] and ho['yesterday_close'] and cl['yesterday_close']:
-                yest_crack = (rb['yesterday_close'] * 28) + (ho['yesterday_close'] * 14) - cl['yesterday_close']
-                crack_chg = crack - yest_crack
-                sign = '+' if crack_chg >= 0 else ''
-                trend = "Widening refinery margin" if crack_chg >= 0 else "Shrinking refinery margin"
-                lines[-1] = f"CRACK SPREAD: ${crack:.2f} ({sign}${crack_chg:.2f})"
-                lines.append(f"Trend: {trend}")
-            lines.append("")
-            
-    lines.append(f"{time_str}")
-    body = "\n".join(lines).strip()
-    if len(body) > MAX_SMS_CHARS:
-        body = body[:MAX_SMS_CHARS - 30].rstrip() + "\n... see email for full details"
+                sma3 = info.get('sma_3')
+                sma10 = info.get('sma_10')
+                if sma3 and sma10:
+                    if sma3 > sma10:
+                        lines.append("Mom: Bullish (Consider Buy)")
+                    else:
+                        lines.append("Mom: Bearish (Consider Wait)")
+                        
+                lines.append("")
+                
+        if 'RB' in all_data and 'HO' in all_data and 'CL' in all_data:
+            rb = all_data['RB']
+            ho = all_data['HO']
+            cl = all_data['CL']
+            if rb['current_price'] and ho['current_price'] and cl['current_price']:
+                crack = (rb['current_price'] * 28) + (ho['current_price'] * 14) - cl['current_price']
+                lines.append(f"CRACK SPREAD: ${crack:.2f}/bbl")
+                if rb['yesterday_close'] and ho['yesterday_close'] and cl['yesterday_close']:
+                    yest_crack = (rb['yesterday_close'] * 28) + (ho['yesterday_close'] * 14) - cl['yesterday_close']
+                    crack_chg = crack - yest_crack
+                    sign = '+' if crack_chg >= 0 else ''
+                    trend = "Widening refinery margin" if crack_chg >= 0 else "Shrinking refinery margin"
+                    lines[-1] = f"CRACK SPREAD: ${crack:.2f} ({sign}${crack_chg:.2f})"
+                    lines.append(f"Trend: {trend}")
+                lines.append("")
+                
+        lines.append(f"{time_str}")
+        body = "\n".join(lines).strip()
+        if len(body) > MAX_SMS_CHARS:
+            body = body[:MAX_SMS_CHARS - 30].rstrip() + "\n... see email for full details"
 
     try:
         sms_msg = MIMEText(body)

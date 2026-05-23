@@ -1,0 +1,37 @@
+name: Weekly System Heartbeat
+
+on:
+  schedule:
+    # Run at 3:00 PM UTC every Sunday (9:00 AM CT)
+    - cron: '0 15 * * 0'
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  heartbeat:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Execute Heartbeat SMS
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+          GH_REPO: ${{ github.repository }}
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+          PHONE_SMS_ADDRESS: ${{ secrets.PHONE_SMS_ADDRESS }}
+        run: |
+          python -c "import main, datetime; main.send_sms({}, datetime.datetime.now(main.TZ), {'label': 'HEARTBEAT'})"

@@ -37,4 +37,4 @@ jobs:
         run: python validate_data.py
 
       - name: Run Comprehensive Test Suite
-        run: python comprehensive_test_suite.py
+        run: pytest
