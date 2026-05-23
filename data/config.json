@@ -1,10 +1,10 @@
 {
   "MIN_ROWS_FOR_TUNING": 30,
   "BLEND_ALPHA": 0.3,
-  "RB_HIKE_THRESHOLD_CENTS": 1.92,
-  "RB_DROP_THRESHOLD_CENTS": -0.74,
-  "HO_HIKE_THRESHOLD_CENTS": 2.29,
-  "HO_DROP_THRESHOLD_CENTS": -2.25,
+  "RB_HIKE_THRESHOLD_CENTS": 1.93,
+  "RB_DROP_THRESHOLD_CENTS": -0.76,
+  "HO_HIKE_THRESHOLD_CENTS": 2.07,
+  "HO_DROP_THRESHOLD_CENTS": -2.02,
   "RB_LEAN_HIKE_CENTS": 0.5,
   "RB_LEAN_DROP_CENTS": -0.5,
   "HO_LEAN_HIKE_CENTS": 0.5,
@@ -16,9 +16,9 @@
   "RB_historical_cvar": 17.245,
   "RB_average_savings": 6.0432,
   "RB_window_days": 120,
-  "HO_nymex_daily_std": 13.4538,
-  "HO_historical_win_rate": 0.9481,
-  "HO_historical_cvar": 31.6878,
-  "HO_average_savings": 9.9659,
-  "HO_window_days": 180
+  "HO_nymex_daily_std": 12.3366,
+  "HO_historical_win_rate": 0.9012,
+  "HO_historical_cvar": 29.7836,
+  "HO_average_savings": 8.6961,
+  "HO_window_days": 240
 }
