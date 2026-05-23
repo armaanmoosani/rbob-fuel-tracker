@@ -126,6 +126,11 @@ def validate_graves_history(csv_path):
     # 3. Impossible Prices (must be positive and within [1.00, 10.00])
     price_cols = ["nymex_rb", "nymex_ho", "rack_u", "rack_p", "rack_d"]
     for col in price_cols:
+        try:
+            df[col] = pd.to_numeric(df[col])
+        except Exception as e:
+            print(f"Data validation failed: Non-numeric value found in column '{col}'. Error: {e}")
+            sys.exit(1)
         valid_prices = df[col].dropna()
         if (valid_prices <= 0).any():
             print(f"Data validation failed: Negative or zero price found in '{col}'.")

@@ -10,6 +10,7 @@ import re
 from datetime import datetime, timedelta
 import pytz
 from unittest.mock import patch, MagicMock, mock_open
+from scipy import stats
 
 # Add current directory to path
 sys.path.append(os.path.dirname(__file__))
@@ -205,6 +206,20 @@ class TestCategory2DatabaseIntegrity(unittest.TestCase):
         self.assertIn(2, del_nymex.index)    # Tuesday kept
         self.assertAlmostEqual(del_nymex.loc[2], -5.0) # Tuesday change is correct!
 
+    def test_2_7_corrupt_row_middle_check(self):
+        # Insert a corrupt non-numeric value in nymex_rb in the middle of a valid DataFrame
+        df = pd.DataFrame({
+            "date": ["2026-05-18", "2026-05-19", "2026-05-20"],
+            "nymex_rb": [2.10, "corrupt_value", 2.12],
+            "nymex_ho": [2.20, 2.25, 2.22],
+            "rack_u": [2.30, 2.35, 2.32],
+            "rack_p": [2.40, 2.45, 2.42],
+            "rack_d": [2.50, 2.55, 2.52]
+        })
+        df.to_csv(self.csv_path, index=False)
+        with self.assertRaises(SystemExit):
+            validate_data.validate_graves_history(self.csv_path)
+
 
 class TestCategory3SettlementCapture(unittest.TestCase):
     """Category 3: NYMEX Settlement Capture Tests"""
@@ -285,6 +300,15 @@ class TestCategory4LagDiscovery(unittest.TestCase):
         tuesday = datetime(2026, 5, 26).date()
         prev = main.previous_nymex_business_day(tuesday)
         self.assertEqual(prev, datetime(2026, 5, 22).date())
+
+    def test_4_6_consecutive_holidays_lag_traversal(self):
+        # Good Friday 2026 is April 3, 2026.
+        # Monday April 6, 2026 is the next business day.
+        # previous_nymex_business_day(Monday April 6) should skip Sunday April 5,
+        # Saturday April 4, and Friday April 3 (Good Friday), returning Thursday April 2.
+        monday = datetime(2026, 4, 6).date()
+        prev = main.previous_nymex_business_day(monday)
+        self.assertEqual(prev, datetime(2026, 4, 2).date())
 
 
 class TestCategory5SplitOLS(unittest.TestCase):
@@ -446,16 +470,100 @@ class TestCategory9AlertLogic(unittest.TestCase):
         is_alert = (change_cents >= hike) or (change_cents <= drop) or (change_cents >= lean_hike) or (change_cents <= lean_drop)
         self.assertFalse(is_alert)
 
+    def test_9_4_threshold_crossover_safety(self):
+        # Verify that crossover or identical boundaries are mutually exclusive
+        # even if hike and drop thresholds are very close or overlap (which clamp prevents).
+        hike = backtest.clamp(0.1, 0.3, 3.0)      # clamped to 0.3
+        drop = backtest.clamp(-0.1, -3.0, -0.3)   # clamped to -0.3
+        self.assertTrue(hike > drop)
+        
+        # Test signal generation exclusivity
+        change = 0.0
+        self.assertFalse(change >= hike and change <= drop)
+
 
 class TestCategory10HistoricalReplay(unittest.TestCase):
     """Category 10: Historical Replay Tests"""
 
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.real_data_dir = os.path.join(os.path.dirname(__file__), "data")
+        
+        # Copy real files to temp dir
+        shutil.copy(os.path.join(self.real_data_dir, "graves_history.csv"), self.temp_dir)
+        shutil.copy(os.path.join(self.real_data_dir, "config.json"), self.temp_dir)
+        
+        # Patch paths
+        self.orig_data_dir = backtest.DATA_DIR
+        self.orig_csv_path = backtest.CSV_PATH
+        self.orig_config_path = backtest.CONFIG_PATH
+        
+        backtest.DATA_DIR = self.temp_dir
+        backtest.CSV_PATH = os.path.join(self.temp_dir, "graves_history.csv")
+        backtest.CONFIG_PATH = os.path.join(self.temp_dir, "config.json")
+
+    def tearDown(self):
+        backtest.DATA_DIR = self.orig_data_dir
+        backtest.CSV_PATH = self.orig_csv_path
+        backtest.CONFIG_PATH = self.orig_config_path
+        shutil.rmtree(self.temp_dir)
+
+    def test_10_1_real_database_length(self):
+        df = pd.read_csv(backtest.CSV_PATH)
+        print(f"\n[Test 10.1] Loaded real CSV inside test suite. Length: {len(df)}")
+        self.assertEqual(len(df), 766)
+
+    def test_10_2_walk_forward_fold_isolation_real_data(self):
+        df = pd.read_csv(backtest.CSV_PATH)
+        self.assertEqual(len(df), 766)
+        
+        # Verify train/test isolation on the real data
+        test_size = 90
+        W = 120
+        folds = 3
+        for f in range(folds):
+            test_start = len(df) - (f + 1) * test_size
+            test_end = len(df) - f * test_size if f > 0 else len(df)
+            train_start = max(0, test_start - W)
+            
+            df_train = df.iloc[train_start:test_start]
+            df_test = df.iloc[test_start:test_end]
+            
+            # Assert no date overlap
+            train_dates = set(df_train['date'])
+            test_dates = set(df_test['date'])
+            self.assertTrue(train_dates.isdisjoint(test_dates))
+
+    def test_10_3_lag_0_correlation_real_data(self):
+        df = pd.read_csv(backtest.CSV_PATH)
+        self.assertEqual(len(df), 766)
+        
+        df_clean = df.dropna(subset=['nymex_rb', 'rack_u']).copy()
+        df_clean['delta_nymex'] = df_clean['nymex_rb'].diff() * 100
+        df_clean['delta_rack'] = df_clean['rack_u'].diff() * 100
+        df_clean = df_clean.dropna(subset=['delta_nymex', 'delta_rack'])
+        
+        slope, intercept, r_val, p_val, std_err = stats.linregress(df_clean['delta_nymex'], df_clean['delta_rack'])
+        # Verify genuine strong relationship
+        self.assertTrue(r_val**2 > 0.10)
+        self.assertTrue(p_val < 0.01)
+
+    def test_10_4_full_replay_win_rate_real_data(self):
+        df = pd.read_csv(backtest.CSV_PATH)
+        self.assertEqual(len(df), 766)
+        
+        cfg = backtest.load_config()
+        # Run optimization on real data
+        cfg, msg, win = backtest.run_optimization(df, 'nymex_rb', 'rack_u', 'RB', cfg)
+        
+        # Verify parameters are updated and savings metrics are recorded
+        self.assertIn('RB_historical_win_rate', cfg)
+        self.assertTrue(cfg['RB_historical_win_rate'] > 0.50)
+        self.assertTrue(cfg['RB_average_savings'] > 0.0)
+
     def test_10_5_permutation_pvalue_math(self):
-        # Real savings = 50.0
-        # Permuted savings list
         real_savings = 50.0
         perm_savings = [10.0, 20.0, 30.0, 45.0, 52.0]
-        # p-value = average of perm_savings >= real_savings
         p_val = np.mean(np.array(perm_savings) >= real_savings)
         self.assertEqual(p_val, 0.20)
 
