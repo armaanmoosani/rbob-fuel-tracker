@@ -341,6 +341,59 @@ def save_settlement_snapshots(all_data, now):
     except Exception as e:
         print(f"Warning: could not save daily_settlement.json: {e}")
 
+def get_decoupling_warning(prefix, now):
+    try:
+        log_path = os.path.join(DATA_DIR, "prediction_log.csv")
+        if not os.path.exists(log_path):
+            return ""
+            
+        cutoff = now - timedelta(days=14)
+        total_actionable = 0
+        wins = 0
+        
+        with open(log_path, "r") as f:
+            lines = f.readlines()[1:] # skip header
+            
+        for line in reversed(lines):
+            parts = line.strip().split(',')
+            if len(parts) < 8:
+                continue
+            ts_str, comm, pred, nymex, lag, win_used, thresh, actual_str = parts[:8]
+            
+            if comm != prefix:
+                continue
+            if pred not in ("HIKE", "DROP"):
+                continue
+            if actual_str == "PENDING" or actual_str == "NaN":
+                continue
+                
+            try:
+                dt_str = ts_str.split("T")[0]
+                # Avoid tzinfo mismatch by converting now to naive for comparison, 
+                # or just parse dt directly into aware
+                dt = datetime.strptime(dt_str, "%Y-%m-%d").replace(tzinfo=now.tzinfo)
+                if dt < cutoff:
+                    break
+                    
+                actual = float(actual_str)
+                if pred == "HIKE" and actual > 0:
+                    wins += 1
+                elif pred == "DROP" and actual < 0:
+                    wins += 1
+                    
+                total_actionable += 1
+            except Exception:
+                pass
+                
+        if total_actionable >= 5:
+            win_rate = wins / total_actionable
+            if win_rate < 0.40:
+                return " WARNING: Supplier pricing has recently decoupled from NYMEX. The system is currently in a lag period before recalibration. Trust this alert with extreme caution."
+    except Exception as e:
+        print(f"[{prefix}] Failed to check decoupling warning: {e}")
+        
+    return ""
+
 def build_rack_signal(prefix, data, now):
     yest = data.get('yesterday_close')
     if not yest:
@@ -453,7 +506,7 @@ def build_rack_signal(prefix, data, now):
         action = "WAIT"
         label = "Drop likely"
         color = "#22c55e"
-        instruction = "Wait if you can safely defer inventory."
+        instruction = "Wait if you can safely defer inventory. Never run tanks dry for a signal."
     elif change_cents >= lean_hike:
         action = "LEAN_BUY"
         label = "Lean hike"
@@ -463,7 +516,7 @@ def build_rack_signal(prefix, data, now):
         action = "LEAN_WAIT"
         label = "Lean drop"
         color = "#38bdf8"
-        instruction = "Small edge only; wait only if inventory risk allows it."
+        instruction = "Small edge only; wait only if inventory risk allows it. Never run tanks dry for a signal."
     else:
         action = "NO_EDGE"
         label = "No clear edge"
@@ -516,6 +569,10 @@ def build_rack_signal(prefix, data, now):
             risk_text += vol_override_msg
         else:
             risk_text = f"Intraday Note:{vol_override_msg}"
+            
+    decoupling_warn = get_decoupling_warning(prefix, now)
+    if decoupling_warn:
+        risk_text += decoupling_warn
 
     if CONFIG_CORRUPT:
         if risk_text:
@@ -1123,7 +1180,7 @@ def send_sms(all_data, now, alert_context):
     if alert_context.get('label') == 'HEARTBEAT':
         body = f"HEARTBEAT\n\nSystem heartbeat: Fuel Tracker is active and operational. SMS gateway is functional.\n\n{time_str}"
     else:
-        lines = [f"{alert_type}"]
+        lines = [f"[{time_str}] {alert_type}"]
         lines.append("")
         
         if alert_context.get('label') == 'Final Verdict':
@@ -1190,9 +1247,6 @@ def send_sms(all_data, now, alert_context):
                     trend = "Widening refinery margin" if crack_chg >= 0 else "Shrinking refinery margin"
                     lines[-1] = f"CRACK SPREAD: ${crack:.2f} ({sign}${crack_chg:.2f})"
                     lines.append(f"Trend: {trend}")
-                lines.append("")
-                
-        lines.append(f"{time_str}")
         body = "\n".join(lines).strip()
         if len(body) > MAX_SMS_CHARS:
             body = body[:MAX_SMS_CHARS - 30].rstrip() + "\n... see email for full details"

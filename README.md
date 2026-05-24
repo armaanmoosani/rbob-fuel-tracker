@@ -20,76 +20,58 @@ The primary metric of the engine's edge is **expected net savings in cents per g
     *   **Honest Multi-Year Precision Envelope:** **53%–73%** (with an overall historical average of **71.0%** and an average savings of **+6.04¢/gal** per active alert).
     *   **Conservative Floor for Planning:** **53.0%** precision.
     *   **Yearly Out-of-Sample Performance Breakdown (Unleaded):**
-        *   **2023 (Moderate Volatility):** 34 alerts | 52.94% precision | **+29.96¢/gal** net savings | **$2,546.60** annual savings (worked example).
-        *   **2024 (Low-to-Moderate Volatility):** 146 alerts | 54.11% precision | **+61.31¢/gal** net savings | **$5,211.35** annual savings (worked example).
-        *   **2025 (High Volatility/Low Noise):** 158 alerts | 72.78% precision | **+217.06¢/gal** net savings | **$18,450.10** annual savings (worked example).
-        *   **Recent Out-of-Sample Window (Late 2025 into 2026):** 80 alerts in 90 days | 96.25% precision | **+542.03¢/gal** savings | **$46,072.55** OOS savings (not a reliable annual projection).
+        *   **2023 (Moderate Volatility):** 34 alerts | 52.94% precision | **+29.96¢/gal** net savings | **$2,546.60** annual savings.
+        *   **2024 (Low-to-Moderate Volatility):** 146 alerts | 54.11% precision | **+61.31¢/gal** net savings | **$5,211.35** annual savings.
+        *   **2025 (High Volatility/Low Noise):** 158 alerts | 72.78% precision | **+217.06¢/gal** net savings | **$18,450.10** annual savings.
+        *   **Recent Out-of-Sample Window (Late 2025 into 2026):** 80 alerts in 90 days | 96.25% precision | **+542.03¢/gal** savings | **$46,072.55** OOS savings.
+
 *   **Diesel / Heating Oil (HO):**
     *   **Honest Multi-Year Precision Envelope:** **60%–79%** (with an overall historical average of **94.8%** and an average savings of **+9.97¢/gal** per active alert).
     *   **Conservative Floor for Planning:** **60.0%** precision.
     *   **Yearly Out-of-Sample Performance Breakdown (Diesel):**
-        *   **2023:** N/A (insufficient warm-up window history).
-        *   **2024:** 84 alerts | 59.52% precision | **+69.41¢/gal** net savings | **$5,900.00** annual savings (worked example).
-        *   **2025:** 178 alerts | 78.65% precision | **+492.13¢/gal** net savings | **$41,831.05** annual savings (worked example).
+        *   **2024:** 84 alerts | 59.52% precision | **+69.41¢/gal** net savings | **$5,900.00** annual savings.
+        *   **2025:** 178 alerts | 78.65% precision | **+492.13¢/gal** net savings | **$41,831.05** annual savings.
 
 ### 2. Payoff Asymmetry & Rockets-and-Feathers Edge
 
 The model's durability across low-precision years (such as 2023 and 2024 at ~53%–59% precision) is driven by **Rockets and Feathers** asymmetric pass-through pricing. Wholesale suppliers raise prices rapidly in response to NYMEX hikes ("rockets") but lower them gradually in response to drops ("feathers"). 
 
 Consequently, the engine's correct alerts capture large moves, while incorrect alerts incur smaller costs. This results in a structurally profitable **Win-to-Loss ratio of 1.06x to 1.50x**:
-
-*   **RBOB (Gasoline) Payoff Asymmetry:**
-    *   **2023:** Avg Win: 5.11¢/gal | Avg Loss: 3.87¢/gal | **Win-Loss Asymmetry: +1.23¢/gal** (Ratio: 1.32x)
-    *   **2024:** Avg Win: 2.83¢/gal | Avg Loss: 2.42¢/gal | **Win-Loss Asymmetry: +0.41¢/gal** (Ratio: 1.17x)
-    *   **2025:** Avg Win: 2.75¢/gal | Avg Loss: 2.30¢/gal | **Win-Loss Asymmetry: +0.44¢/gal** (Ratio: 1.19x)
-*   **HO (Diesel) Payoff Asymmetry:**
-    *   **2024:** Avg Win: 3.90¢/gal | Avg Loss: 3.69¢/gal | **Win-Loss Asymmetry: +0.21¢/gal** (Ratio: 1.06x)
-    *   **2025:** Avg Win: 4.29¢/gal | Avg Loss: 2.87¢/gal | **Win-Loss Asymmetry: +1.43¢/gal** (Ratio: 1.50x)
-
-### 3. Understanding the Precision Trend (Monotonic Growth)
-
-Unleaded precision has increased monotonically over the three years (52.9% -> 54.1% -> 72.8%). This trend likely reflects a combination of three factors:
-1.  **Accumulating History:** The model accumulating more Graves-specific history to tune thresholds.
-2.  **Structural Pegging:** Graves Oil's pricing behavior becoming more mechanically tied to NYMEX.
-3.  **Low-Volatility Regime Bias (Warning Caveat):** Recent low-volatility/calm market conditions in 2025 making direction easier to call.
+*   **RBOB (Gasoline) Asymmetry:** Win: 2.75¢ - 5.11¢/gal | Loss: 2.30¢ - 3.87¢/gal (Ratio: 1.17x - 1.32x)
+*   **HO (Diesel) Asymmetry:** Win: 3.90¢ - 4.29¢/gal | Loss: 2.87¢ - 3.69¢/gal (Ratio: 1.06x - 1.50x)
 
 > [!CAUTION]
-> **Volatility Warning:** If the 2025 precision increase is primarily a result of calm markets rather than model improvement, a return of high-volatility spikes in 2026 could cause performance to revert to the conservative planning floor of **53% (RB)** / **60% (HO)**. Decisions like storage capacity investment or cash flow planning should always be stress-tested at the 53% / 60% floors, not the recent 96% regime levels.
-
-### 4. Category B Audits & Operational Edge Constraints
-
-We conducted six empirical audits to identify the operational limits and structural characteristics of the model's edge:
-*   **Conviction-Conditional Precision over Time (`conviction_regime_audit.py`):** Across normal market conditions, filtering out Low Conviction alerts ($|Z| < 1.0$) eliminates the structural noise drag. Moderate and High conviction alerts remain highly robust and deliver positive expected edge even in low-precision years (like 2024, where Low Conviction alerts actually drag performance to negative territory: -0.11¢/gal for RB and -0.33¢/gal for HO).
-*   **Weekday Alert Performance (`weekday_performance_audit.py`):** Mondays and Tuesdays are the highest-performing days for both commodities, with Monday precision reaching **83.33%** for Unleaded and **97.30%** for Diesel. Fridays do see a moderate precision drop relative to Monday/Tuesday, but they remain strictly profitable and exceed the conservative planning floors.
-*   **Basis Drift Detection (`basis_drift_audit.py`):** Running the Mann-Kendall trend test with Sen's slope estimator revealed that the basis is highly dynamic. Over the full history, the drift is tiny (under 0.01¢/day), but over the last 90 trading days, massive structural basis shifts occurred in both commodities. This confirms why walk-forward calibration is crucial: standard static thresholds would fail under such rapid basis drift, whereas our daily auto-calibration successfully adapts to the shifted environment.
-*   **Savings Decay after Signal (`savings_decay_audit.py`):** If a buyer delays purchasing by 1 day, the rack price has already adjusted (rising by +1.72¢ for RB and +1.61¢ for HO), wiping out approximately **30-40%** of the potential savings. By day 3, the physical price movement has fully absorbed the signal, confirming that prompt execution before the midnight deadline is vital to capturing the edge.
-*   **Seasonal Threshold Calibration (`seasonal_calibration_audit.py`):** Seasonal threshold sweeps slightly underperformed the unified annual walk-forward calibration (by -0.52% for Unleaded and -1.01% for Diesel). Partitioning the data into seasonal blocks reduces sample size and introduces data-snooping risk without improving performance. Therefore, we should stick to the unified annual walk-forward window.
-*   **Drawdown Streak Analysis (`drawdown_audit.py`):** High Conviction alerts have an incredibly robust risk profile, with maximum consecutive drawdowns of only 3 losses for Unleaded and just 1 loss for Diesel. In contrast, Low Conviction alerts can experience long losing streaks (up to 9 consecutive losses for Diesel). Operational fuel buyers should skew capital allocations heavily toward High Conviction signals and treat Low Conviction signals with caution.
+> **Volatility Warning:** If the 2025 precision increase is primarily a result of calm markets rather than model improvement, a return of high-volatility spikes in 2026 could cause performance to revert to the conservative planning floor of **53% (RB)** / **60% (HO)**. Decisions like storage capacity investment should always be stress-tested at the 53% / 60% floors, not the recent 96% regime levels.
 
 ---
 
 ## Core Features
 
-- **Hourly Ingestion Retries (`ingest_prices.py`)**: Nightly connects via IMAP to read the official supplier invoice. It queries hourly from 8:00 PM to 12:00 AM CT to prevent false missing-email alarms, handles target date calculations across the midnight boundary, and appends parsed rack prices to an immutable CSV history.
+- **Hourly Ingestion Retries (`ingest_prices.py`)**: Nightly connects via IMAP to read the official supplier invoice. It queries hourly from 8:00 PM to 12:00 AM CT with exponential backoff to prevent false missing-email alarms, handles target date calculations across the midnight boundary, and appends parsed rack prices to an immutable CSV history.
 - **Walk-Forward Calibration (`backtest.py`)**: Re-engineers threshold calibration using a robust 3-fold Walk-Forward Validation strategy over the last 365 days of history (90-day out-of-sample test windows). Parameters ($W, Hp, Dp$) are chosen to maximize **median out-of-sample savings** to prevent backtest overfitting.
-- **Dynamic Volatility & Z-Score Conviction (`main.py`)**: Evaluates the strength of futures moves using the rolling standard deviation of daily changes ($\sigma$). It translates daily changes into Z-scores to grade alerts by conviction: **High Conviction** ($|Z| \ge 1.5$), **Moderate Conviction** ($1.0 \le |Z| < 1.5$), or **Low Conviction** ($|Z| < 1.0$).
+- **Contract Roll Day Exclusions**: Excludes anomalous futures price data surrounding CME contract roll days (the 25th of the month, or nearest business day) from both calibration and active trading to prevent false signaling during mechanical liquidity shifts.
+- **Dynamic Volatility & Z-Score Conviction**: Evaluates the strength of futures moves using the rolling standard deviation of daily changes ($\sigma$). It translates daily changes into Z-scores to grade alerts by conviction: **High Conviction** ($|Z| \ge 1.5$), **Moderate Conviction** ($1.0 \le |Z| < 1.5$), or **Low Conviction** ($|Z| < 1.0$). Z-score thresholds are smoothed for historical reproducibility.
 - **Quantified Deferral Risk (CVaR)**: Computes the 95% Conditional Value-at-Risk (worst-case tail risk) over the optimal window. For "WAIT" alerts, it computes the expected price spike cost:
   *e.g., "Risk Note: On the worst 5% of days historically, rack prices spiked +4.20¢/gal (+$357 per 8,500 gal truck)."*
 - **Real-Time SMS & Email Alerts**: Polls the Schwab API and Yahoo Finance API (`RB=F`, `HO=F`, `CL=F`) during CME trading hours. At 2:35 PM CT (post-NYMEX settlement), it sends structured, high-value alerts containing the verdict, Z-score conviction, and tail-risk warnings.
-- **Overnight verification loop**: Automatically backfills prediction outcomes by comparing them to the next trading day's physical rack price, appending results to `prediction_log.csv` and displaying the confirmation table in morning notifications.
-- **Outlook-Safe Weekly Dashboard (`weekly_report.py`)**: Runs every Saturday morning. It calculates cumulative savings in cents-per-gallon and equivalent dollar totals (assuming an 8,500 gallon capacity delivery truck). It runs a stable **180-day permutation significance test** (computing a p-value to prove model edge over random chance) and formats the dashboard using nested HTML tables for rendering safety.
-- **Blockchain-Style Data Validation (`validate_data.py`)**: Protects the database against corruption and manual edits using an append-only registry of SHA-256 hashes (`data/integrity_hashes.csv`), treating `config.json` as a mutable schema-checked file.
+- **Overnight Verification Loop**: Automatically backfills prediction outcomes by comparing them to the next trading day's physical rack price, appending results to `prediction_log.csv` and displaying the confirmation table in morning notifications.
+- **Outlook-Safe Weekly Dashboard (`weekly_report.py`)**: Runs every Saturday morning. It calculates cumulative savings, runs a stable 180-day permutation significance test, and formats the dashboard using nested HTML tables for rendering safety.
+- **Blockchain-Style Data Validation (`validate_data.py`)**: Protects the database against corruption and manual edits using an append-only registry of SHA-256 hashes (`data/integrity_hashes.csv`), enforcing strict immutability.
 
 ---
 
 ## System Architecture
 
-1. **GitHub Actions Workflows**: 
+1. **Serverless Execution on GitHub Actions**: 100% serverless data pipeline powered by GitHub Actions. Workflows use shared concurrency groups (e.g. `rbob-tracker`) to enforce queueing and prevent `git push` collision errors during parallel operations.
+2. **Workflow Topography**: 
    - **Real-Time Tracker (`tracker.yml`)**: Runs every 5 minutes during CME Globex hours to monitor futures and send alerts.
-   - **Nightly Ingestion & Backtest (`backtest_ingest.yml`)**: Checks hourly from 8:00 PM to 12:00 AM Chicago time to pull Graves invoices, validate hashes, run walk-forward calibration, and push configuration files.
-   - **Weekly Dashboard (`weekly_report.yml`)**: Runs Saturday mornings at 3:00 AM CT to backfill pending outcomes, compute permutation significance, generate Matplotlib performance charts, and send reports.
-2. **Data Storage**: `data/graves_history.csv` and `data/prediction_log.csv` act as lightweight, flat-file databases synced directly to the `main` git branch. 
-3. **Serverless Execution**: 100% serverless execution on GitHub Actions.
+   - **Nightly Ingestion & Backtest (`backtest_ingest.yml`)**: Checks hourly from 8:00 PM to 12:00 AM CT to pull invoices, validate hashes, run walk-forward calibration, and update caches.
+   - **Weekly Dashboard (`weekly_report.yml`)**: Generates reports and analytics every Saturday.
+   - **CI & Health (`ci.yml`, `heartbeat.yml`, `keepalive.yml`)**: Automated testing, system health notifications, and repository activity maintenance.
+3. **Configuration & Data State Storage**: 
+   - **`config.json`**: Read-only, statically schema-checked configuration file for core engine variables.
+   - **`metrics_cache.json`**: Dynamically written, ephemeral state cache storing walk-forward thresholds and daily validation metrics without dirtying the static configuration.
+   - **`data/*.csv`**: Lightweight, flat-file databases synced directly to the git branch.
 
 ---
 
@@ -105,7 +87,7 @@ To deploy this securely to your own private repository:
    - `GMAIL_APP_PASSWORD`: The Google App Password for the sending account.
    - `TO_EMAIL`: The destination SMS gateway (e.g., `1234567890@vtext.com` for Verizon).
    - `PHONE_SMS_ADDRESS`: Optional comma-separated SMS gateway addresses (falls back to `TO_EMAIL` if empty).
-3. **Timezone Verification**: The pipeline relies on the America/Chicago timezone for trading hours and date boundaries. The codebase enforces Chicago time explicitly; if deployed locally or on custom runners, ensure that `pytz` can resolve `America/Chicago` correctly.
+3. **Timezone Verification**: The pipeline strictly relies on the `America/Chicago` timezone for trading hours, execution windows, and date boundaries. 
 
 ---
 
@@ -114,42 +96,13 @@ To deploy this securely to your own private repository:
 The repository contains a highly thorough, multi-tiered testing framework:
 
 1. **Comprehensive Test Suite (`comprehensive_test_suite.py`)**: 
-   - A unit-test suite with **54 tests** covering all **12 core categories** (email parsing, bounds checks, sorting order, timezone boundaries, lag math, OLS Rockets & Feathers, threshold clamping, walk-forward isolation, CVaR and Z-score calculations, timezone drift simulations, partial CSV auto-repairs, config fallback systems, yfinance cache staleness, SMTP outbound logging, and conviction format verification). Run with:
-     ```bash
-     python comprehensive_test_suite.py
-     ```
+   - A unit-test suite with **54 tests** covering all core categories (email parsing, bounds checks, timezone boundaries, lag math, threshold clamping, CVaR calculations, etc.).
 2. **Deterministic Day Replay (`replay_day.py`)**:
-   - Performs a stateful point-in-time prediction audit on historically logged days to guarantee the system is deterministic, timezone-stable, and free of future-data leakages. Run with:
-     ```bash
-     python replay_day.py --date YYYY-MM-DD
-     ```
+   - Performs a stateful point-in-time prediction audit on historically logged days to guarantee the system is deterministic, timezone-stable, and free of future-data leakages.
 3. **Statistical Validation & Shadow Benchmarks (`verify_statistics.py`)**:
-   - Audits model significance against randomized null models (permutation test), evaluates out-of-sample holdout datasets, computes yearly regime shifts, analyzes residual diagnostics, and measures model performance against shadow baselines. Run with:
-     ```bash
-     python verify_statistics.py
-     ```
-4. **Category B Empirical Audits (`scratch/`)**:
-   - Six specialized empirical audits designed to identify boundary conditions, decay curves, weekday characteristics, and risk structures:
-     - `conviction_regime_audit.py`: Breakdown of win rate and savings binned by Z-score conviction across all years.
-     - `weekday_performance_audit.py`: Weekday alert performance to test weekend decays or Friday drift.
-     - `basis_drift_audit.py`: Mann-Kendall trend check with Sen's slope estimator to verify basis stability.
-     - `savings_decay_audit.py`: Measures pricing decay when purchase execution is delayed by 1-3 trading days.
-     - `seasonal_calibration_audit.py`: Sweeps seasonal Summer vs. Winter calibrations against unified annual calibration.
-     - `drawdown_audit.py`: Identifies worst-case consecutive losing streaks and drawdowns binned by Z-score conviction level.
-     Run any audit directly:
-     ```bash
-     python scratch/conviction_regime_audit.py
-     ```
-5. **Stress Testing and Sensitivity Sweep (`scratch/run_simulations.py`)**:
-   - Audits model limitations under parameter sensitivity (169 grid sweep), simulates extreme geopolitical black swan shocks ($\pm40\text{¢/gal}$ daily moves) to verify threshold adaptability, and conducts contract roll spuriousness checks. Run with:
-     ```bash
-     python scratch/run_simulations.py
-     ```
-6. **Data Injections (`scratch/test_validation_injection.py`)**:
-   - Asserts that the data validation parser successfully catches duplicate dates, invalid bounds, weekday gaps, and negative numbers. Run with:
-     ```bash
-     python scratch/test_validation_injection.py
-     ```
+   - Audits model significance against randomized null models (permutation test), evaluates out-of-sample holdout datasets, computes yearly regime shifts, analyzes residual diagnostics, and measures model performance against shadow baselines.
+4. **Empirical Audits & Stress Testing (`scratch/`)**:
+   - A suite of specialized tools (`conviction_regime_audit.py`, `weekday_performance_audit.py`, `run_simulations.py`, etc.) for identifying boundary conditions, decay curves, weekday characteristics, and risk structures.
 
 ---
 

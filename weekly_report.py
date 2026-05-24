@@ -197,6 +197,7 @@ def main():
     
     TRUCK_GALLONS = 8500
     lifetime_savings_dollars = (lifetime_savings_cents / 100.0) * TRUCK_GALLONS
+    est_realized_lifetime_dollars = lifetime_savings_dollars * 0.75
     avg_savings_per_truck_dollars = (avg_savings_per_active_alert_cents / 100.0) * TRUCK_GALLONS
     
     # Weekly metrics (Last 7 days activity)
@@ -213,6 +214,7 @@ def main():
     week_precision = (week_correct / week_active_fired * 100) if week_active_fired > 0 else 0.0
     week_savings_cents = df_week_alerts['savings_cents'].sum() if week_active_fired > 0 else 0.0
     week_savings_dollars = (week_savings_cents / 100.0) * TRUCK_GALLONS
+    est_realized_week_dollars = week_savings_dollars * 0.75
 
     # Format Recent Resolved Alerts Log for last 7 days
     recent_alerts_html = ""
@@ -579,7 +581,8 @@ def main():
                                         <td width="31%" align="center" style="background-color: #f8fafc; padding: 14px 8px; border-radius: 6px; border: 1px solid #e2e8f0;">
                                             <div style="color: #64748b; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Weekly Savings</div>
                                             <div style="color: #22c55e; font-size: 20px; font-weight: 700; margin-top: 6px;">{week_savings_cents:+.2f}¢</div>
-                                            <div style="color: #16a34a; font-size: 11px; font-weight: 600; margin-top: 2px;">(${week_savings_dollars:,.2f}/tk)*</div>
+                                            <div style="color: #16a34a; font-size: 11px; font-weight: 600; margin-top: 2px;">(${week_savings_dollars:,.2f} Max Modeled)*</div>
+                                            <div style="color: #10b981; font-size: 10px; font-style: italic; margin-top: 2px;">~${est_realized_week_dollars:,.2f} Est. Realized</div>
                                         </td>
                                     </tr>
                                 </table>
@@ -629,7 +632,8 @@ def main():
                                         <td width="48%" align="center" style="background-color: #f8fafc; padding: 14px; border-radius: 6px; border: 1px solid #e2e8f0; display: inline-block; vertical-align: top; width: 44%;">
                                             <div style="color: #64748b; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Hypothetical Cum. Savings</div>
                                             <div style="color: #22c55e; font-size: 22px; font-weight: 700; margin-top: 6px;">{lifetime_savings_cents:+.2f}¢/gal</div>
-                                            <div style="color: #16a34a; font-size: 11px; font-weight: 600; margin-top: 2px;">(${lifetime_savings_dollars:,.2f} total)*</div>
+                                            <div style="color: #16a34a; font-size: 11px; font-weight: 600; margin-top: 2px;">(${lifetime_savings_dollars:,.2f} Max Modeled)*</div>
+                                            <div style="color: #10b981; font-size: 10px; font-style: italic; margin-top: 2px;">~${est_realized_lifetime_dollars:,.2f} Est. Realized</div>
                                         </td>
                                     </tr>
                                 </table>
@@ -642,8 +646,8 @@ def main():
                                                 * Execution Benchmark Disclaimer
                                             </p>
                                             <p style="margin: 6px 0 0 0; font-size: 11px; color: #b45309; line-height: 1.4;">
-                                                Because the model does not access your actual purchasing invoices, savings are modeled assuming a baseline of buying or waiting exactly one standard 8,500 gallon capacity delivery truck per active alert. 
-                                                <strong>To find your actual realized savings:</strong> multiply your actual delivery volume (in gallons) by the <strong>Average Savings per Active Alert ({avg_savings_per_active_alert_cents:+.2f}&cent;/gal)</strong> for the alerts you choose to act on.
+                                                Because the system has no visibility into your physical tank levels, you will inevitably be forced to buy on some WAIT days to prevent running dry. Savings are initially modeled assuming a baseline of buying or waiting exactly one standard 8,500 gallon capacity delivery truck per active alert. 
+                                                <strong>To find your estimated realized savings:</strong> We discount modeled savings by 25% to account for physical constraints. Or, multiply your actual delivery volume by the <strong>Average Savings per Active Alert ({avg_savings_per_active_alert_cents:+.2f}&cent;/gal)</strong>.
                                             </p>
                                         </td>
                                     </tr>

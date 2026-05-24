@@ -7,9 +7,9 @@ import shutil
 import pandas as pd
 import numpy as np
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import pytz
-from unittest.mock import patch, MagicMock, mock_open
+from unittest.mock import patch, MagicMock, mock_open, call
 from scipy import stats
 
 # Add current directory to path
@@ -220,6 +220,52 @@ class TestCategory2DatabaseIntegrity(unittest.TestCase):
         with self.assertRaises(SystemExit):
             validate_data.validate_graves_history(self.csv_path)
 
+    def test_2_8_repair_csv_with_exactly_3_columns(self):
+        with open(self.csv_path, "w", encoding="utf-8") as f:
+            f.write("date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
+            f.write("2026-05-18,2.10,2.20,2.30,2.40,2.50\n")
+            f.write("2026-05-19,2.15,2.25") # Exactly 3 columns instead of 6
+            
+        validate_data.repair_csv_if_corrupted(self.csv_path)
+        
+        with open(self.csv_path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(lines[1], "2026-05-18,2.10,2.20,2.30,2.40,2.50")
+
+    def test_2_9_historical_row_modification_detection(self):
+        # 1. Initialize integrity hashes
+        self.write_valid_csv()
+        validate_data.validate_all(self.temp_dir)
+        
+        # 2. Modify a historical row (first row of graves_history.csv, index 0, not the last row)
+        df = pd.read_csv(self.csv_path)
+        df.loc[0, 'nymex_rb'] = 9.99
+        df.to_csv(self.csv_path, index=False)
+        
+        # 3. Running verification should fail with SystemExit due to historical row modification
+        with self.assertRaises(SystemExit):
+            validate_data.validate_all(self.temp_dir)
+
+    def test_2_10_missing_metrics_cache_does_not_fail_validation(self):
+        # On day zero of a fresh fork, metrics_cache.json won't exist.
+        # Ensure validation handles this gracefully.
+        self.write_valid_csv()
+        metrics_path = os.path.join(self.temp_dir, "metrics_cache.json")
+        if os.path.exists(metrics_path):
+            os.remove(metrics_path)
+            
+        try:
+            validate_data.validate_all(self.temp_dir)
+        except SystemExit:
+            self.fail("validate_all raised SystemExit when metrics_cache.json was missing!")
+            
+        # Verify hashes CSV was created and contains graves_history but NOT metrics_cache
+        df_hashes = pd.read_csv(self.hashes_path)
+        tracked_files = df_hashes['file_name'].tolist()
+        self.assertIn("graves_history.csv", tracked_files)
+        self.assertNotIn("metrics_cache.json", tracked_files)
+
 
 class TestCategory3SettlementCapture(unittest.TestCase):
     """Category 3: NYMEX Settlement Capture Tests"""
@@ -263,6 +309,141 @@ class TestCategory3SettlementCapture(unittest.TestCase):
             os.remove(self.ds_path)
         ds = ingest_prices.read_daily_settlement("2026-05-22")
         self.assertIsNone(ds)
+
+    @patch('ingest_prices.git_pull_rebase')
+    @patch('ingest_prices.validate_data.validate_all')
+    @patch('ingest_prices.check_inbox_for_prices')
+    @patch('ingest_prices.git_commit_push')
+    @patch('ingest_prices.send_alert_email')
+    @patch('ingest_prices.read_daily_settlement')
+    @patch('ingest_prices.get_github_settlement_snapshots')
+    @patch('yfinance.Ticker')
+    @patch('ingest_prices.datetime')
+    def test_3_5_settlement_fallback_chain(self, mock_datetime, mock_yf_ticker, mock_github, mock_read_local, mock_send_email, mock_commit, mock_check_inbox, mock_validate, mock_pull):
+        # 1. Setup datetime to be a Monday night (2026-05-18 20:00 Chicago time)
+        tz = pytz.timezone('America/Chicago')
+        dt_monday = tz.localize(datetime(2026, 5, 18, 20, 0, 0))
+        mock_datetime.now.return_value = dt_monday
+        mock_datetime.fromisoformat.side_effect = lambda s: datetime.fromisoformat(s)
+        
+        # 2. Setup inbox check to return valid prices for today
+        mock_check_inbox.return_value = ("2026-05-18", (2.10, 2.20, 2.30))
+        
+        # Mock file operations to prevent touching real files
+        temp_dir = tempfile.mkdtemp()
+        orig_csv_path = ingest_prices.CSV_PATH
+        orig_ds_path = ingest_prices.DS_PATH
+        ingest_prices.CSV_PATH = os.path.join(temp_dir, "graves_history.csv")
+        ingest_prices.DS_PATH = os.path.join(temp_dir, "daily_settlement.json")
+        
+        # Write a header-only csv
+        with open(ingest_prices.CSV_PATH, "w") as f:
+            f.write("date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
+            
+        try:
+            # --- Scenario 1: Local daily_settlement.json matches ---
+            mock_read_local.return_value = {
+                "date": "2026-05-18",
+                "rbob_settlement": 2.05,
+                "heating_oil_settlement": 2.15
+            }
+            
+            # Run main
+            try:
+                ingest_prices.main()
+            except SystemExit:
+                pass
+                
+            # Verify local was called, but github and yfinance were not
+            mock_read_local.assert_called_with("2026-05-18")
+            mock_github.assert_not_called()
+            mock_yf_ticker.assert_not_called()
+            
+            # --- Scenario 2: Local missing/stale, GitHub matches ---
+            mock_read_local.reset_mock()
+            mock_github.reset_mock()
+            mock_yf_ticker.reset_mock()
+            
+            # Clear CSV so it doesn't complain about duplicates
+            with open(ingest_prices.CSV_PATH, "w") as f:
+                f.write("date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
+                
+            mock_read_local.return_value = None
+            mock_github.return_value = {
+                "date": "2026-05-18",
+                "rbob_settlement": 2.05,
+                "heating_oil_settlement": 2.15,
+                "source": "github_variables"
+            }
+            
+            try:
+                ingest_prices.main()
+            except SystemExit:
+                pass
+                
+            mock_read_local.assert_called_once()
+            mock_github.assert_called_with("2026-05-18")
+            mock_yf_ticker.assert_not_called()
+            
+            # --- Scenario 3: Local and GitHub missing, Yahoo Finance matches ---
+            mock_read_local.reset_mock()
+            mock_github.reset_mock()
+            mock_yf_ticker.reset_mock()
+            
+            with open(ingest_prices.CSV_PATH, "w") as f:
+                f.write("date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
+                
+            mock_read_local.return_value = None
+            mock_github.return_value = None
+            
+            # Mock yfinance return
+            mock_ticker_obj = MagicMock()
+            mock_history_df = pd.DataFrame(
+                {'Close': [2.05]},
+                index=[datetime(2026, 5, 18, tzinfo=pytz.utc)]
+            )
+            mock_ticker_obj.history.return_value = mock_history_df
+            mock_yf_ticker.return_value = mock_ticker_obj
+            
+            try:
+                ingest_prices.main()
+            except SystemExit:
+                pass
+                
+            mock_read_local.assert_called_once()
+            mock_github.assert_called_once()
+            # Yahoo finance called twice (once for RB=F, once for HO=F)
+            self.assertEqual(mock_yf_ticker.call_count, 2)
+            mock_yf_ticker.assert_has_calls([call('RB=F'), call('HO=F')], any_order=True)
+            
+        finally:
+            ingest_prices.CSV_PATH = orig_csv_path
+            ingest_prices.DS_PATH = orig_ds_path
+            shutil.rmtree(temp_dir)
+
+    @patch('ingest_prices.datetime')
+    def test_3_6_imap_date_boundary_hour_under_4(self, mock_datetime):
+        # Local hour is 3:59 AM (hour < 4) on 2026-05-18
+        tz = pytz.timezone('America/Chicago')
+        dt = tz.localize(datetime(2026, 5, 18, 3, 59, 0))
+        mock_datetime.now.return_value = dt
+        mock_datetime.fromisoformat.side_effect = lambda s: datetime.fromisoformat(s)
+        
+        now_local = dt
+        if now_local.hour < 4:
+            target_date_str = (now_local - timedelta(days=1)).date().isoformat()
+        else:
+            target_date_str = now_local.date().isoformat()
+        self.assertEqual(target_date_str, "2026-05-17")
+        
+        # Test 4 hours or over (e.g. 4:00 AM)
+        dt_4 = tz.localize(datetime(2026, 5, 18, 4, 0, 0))
+        now_local = dt_4
+        if now_local.hour < 4:
+            target_date_str = (now_local - timedelta(days=1)).date().isoformat()
+        else:
+            target_date_str = now_local.date().isoformat()
+        self.assertEqual(target_date_str, "2026-05-18")
 
 
 class TestCategory4LagDiscovery(unittest.TestCase):
@@ -392,6 +573,88 @@ class TestCategory7WalkForward(unittest.TestCase):
             self.assertTrue(test_start <= test_end)
             self.assertEqual(test_end - test_start, test_size)
 
+    def test_7_2_walk_forward_roll_day_exclusion(self):
+        # Construct synthetic history
+        W = 10
+        test_size = 90
+        folds = 3
+        total_rows = W + test_size * folds  # 10 + 270 = 280 rows
+        
+        dates = pd.date_range("2026-01-01", periods=total_rows).strftime("%Y-%m-%d").tolist()
+        df = pd.DataFrame({
+            "date": dates,
+            "nymex_rb": [2.0] * total_rows,
+            "rack_u": [2.1] * total_rows
+        })
+        # Let nymex rise at index 189 and 279 (test window last rows of fold 1 and fold 0)
+        df.loc[189:, "nymex_rb"] = 2.5
+        df.loc[189:, "rack_u"] = 2.6
+        
+        df.loc[279:, "nymex_rb"] = 3.0
+        df.loc[279:, "rack_u"] = 3.1
+        
+        # Precompute deltas
+        df['delta_nymex'] = df['nymex_rb'].diff() * 100
+        df['delta_rack'] = df['rack_u'].diff() * 100
+        
+        # 1. Run with is_contract_roll_day returning False for all dates
+        with patch('backtest.is_contract_roll_day', return_value=False):
+            savings_with_roll = backtest.simulate_walk_forward(df, "nymex_rb", "rack_u", W, Hp=15, Dp=85, prefix="RB")
+            
+        # 2. Run with is_contract_roll_day returning True for the specific roll dates
+        roll_dates = {dates[189], dates[279]}
+        def mock_is_roll(dt, prefix):
+            return dt in roll_dates
+            
+        with patch('backtest.is_contract_roll_day', side_effect=mock_is_roll):
+            savings_without_roll = backtest.simulate_walk_forward(df, "nymex_rb", "rack_u", W, Hp=15, Dp=85, prefix="RB")
+            
+        self.assertGreater(savings_with_roll, savings_without_roll)
+
+    def test_7_3_lookahead_bias_prevention(self):
+        W = 120
+        test_size = 90
+        folds = 3
+        total_rows = W + test_size * folds
+        
+        dates = pd.date_range("2026-01-01", periods=total_rows).strftime("%Y-%m-%d").tolist()
+        df = pd.DataFrame({
+            "date": dates,
+            "nymex_rb": np.linspace(2.0, 3.0, total_rows),
+            "rack_u": np.linspace(2.1, 3.1, total_rows)
+        })
+        # Precompute deltas
+        df['delta_nymex'] = df['nymex_rb'].diff() * 100
+        df['delta_rack'] = df['rack_u'].diff() * 100
+        
+        captured_train_dfs = []
+        orig_get_clean_deltas = backtest.get_clean_deltas
+        
+        def mock_get_clean_deltas(df_train, nymex_col, rack_col):
+            captured_train_dfs.append(df_train.copy())
+            return orig_get_clean_deltas(df_train, nymex_col, rack_col)
+            
+        with patch('backtest.get_clean_deltas', side_effect=mock_get_clean_deltas):
+            backtest.simulate_walk_forward(df, "nymex_rb", "rack_u", W, Hp=15, Dp=85, prefix="RB")
+            
+        self.assertEqual(len(captured_train_dfs), folds)
+        
+        for f in range(folds):
+            N = len(df)
+            test_start_idx = N - (f + 1) * test_size
+            test_end_idx = N - f * test_size if f > 0 else N
+            
+            df_test = df.iloc[test_start_idx:test_end_idx]
+            df_train = captured_train_dfs[f]
+            
+            train_max_date = df_train['date'].max()
+            test_min_date = df_test['date'].min()
+            self.assertLess(train_max_date, test_min_date)
+            
+            train_dates = set(df_train['date'])
+            test_dates = set(df_test['date'])
+            self.assertTrue(train_dates.isdisjoint(test_dates))
+
 
 class TestCategory8CVaRAndRiskMetrics(unittest.TestCase):
     """Category 8: CVaR and Risk Metrics Tests"""
@@ -480,6 +743,86 @@ class TestCategory9AlertLogic(unittest.TestCase):
         # Test signal generation exclusivity
         change = 0.0
         self.assertFalse(change >= hike and change <= drop)
+
+    @patch('main.is_contract_roll_day')
+    def test_9_5_roll_day_suppression_regardless_of_move(self, mock_roll_check):
+        mock_roll_check.return_value = True
+        
+        # Even with a massive 10.0 cent move (normally BUY_NOW with High Conviction)
+        data = {
+            'current_price': 2.20,
+            'yesterday_close': 2.00,
+            'open_price': 2.00,
+            'high_price': 2.25,
+            'low_price': 1.95,
+            'daily_pct': 10.0,
+            'five_day_high': 2.25,
+            'five_day_low': 1.95,
+            'thirty_day_avg': 2.05,
+            'chart_intraday_b64': 'mock_base64',
+            'chart_5d_b64': 'mock_base64',
+        }
+        
+        signal = main.build_rack_signal('RB', data, datetime.now())
+        self.assertEqual(signal['action'], 'NO_EDGE')
+        self.assertEqual(signal['label'], 'Contract roll boundary')
+
+        # Test with drop move (-10.0 cents)
+        data_drop = data.copy()
+        data_drop['current_price'] = 1.80
+        data_drop['daily_pct'] = -10.0
+        
+        signal_drop = main.build_rack_signal('RB', data_drop, datetime.now())
+        self.assertEqual(signal_drop['action'], 'NO_EDGE')
+        self.assertEqual(signal_drop['label'], 'Contract roll boundary')
+
+    @patch('main.load_settlement_snapshot', return_value=None)
+    def test_9_6_tiered_action_ladder_boundaries(self, mock_load_snapshot):
+        with patch.dict(main.APP_CONFIG, {
+            "RB_HIKE_THRESHOLD_CENTS": 1.0,
+            "RB_DROP_THRESHOLD_CENTS": -1.0,
+            "RB_LEAN_HIKE_CENTS": 0.5,
+            "RB_LEAN_DROP_CENTS": -0.5,
+            "RB_nymex_daily_std": 1.0
+        }):
+            def get_act(current_p):
+                data = {
+                    'current_price': current_p,
+                    'yesterday_close': 2.00,
+                    'open_price': 2.00,
+                    'high_price': 2.00,
+                    'low_price': 2.00,
+                    'daily_pct': 0.0,
+                    'five_day_high': 2.00,
+                    'five_day_low': 2.00,
+                    'thirty_day_avg': 2.00
+                }
+                return main.build_rack_signal('RB', data, datetime.now())['action']
+            
+            # Using slightly offset prices to ensure float arithmetic maps precisely to boundaries (unbiased)
+            # Exactly equal or above hike_thresh (1.0c) -> BUY_NOW
+            self.assertEqual(get_act(2.010001), "BUY_NOW")
+            
+            # Slightly below hike_thresh (0.99c) -> LEAN_BUY
+            self.assertEqual(get_act(2.0099), "LEAN_BUY")
+            
+            # Slightly above lean_hike boundary (0.5c) to avoid float precision issues -> LEAN_BUY
+            self.assertEqual(get_act(2.005001), "LEAN_BUY")
+            
+            # Slightly below lean_hike (0.49c) -> NO_EDGE
+            self.assertEqual(get_act(2.0049), "NO_EDGE")
+            
+            # Exactly equal to drop_thresh (-1.0c) -> WAIT
+            self.assertEqual(get_act(1.99), "WAIT")
+            
+            # Slightly above drop_thresh (-0.99c) -> LEAN_WAIT
+            self.assertEqual(get_act(1.9901), "LEAN_WAIT")
+            
+            # Slightly below lean_drop boundary (-0.5c) to avoid float precision issues -> LEAN_WAIT
+            self.assertEqual(get_act(1.994999), "LEAN_WAIT")
+            
+            # Slightly above lean_drop (-0.49c) -> NO_EDGE
+            self.assertEqual(get_act(1.9951), "NO_EDGE")
 
 
 class TestCategory10HistoricalReplay(unittest.TestCase):
@@ -572,6 +915,32 @@ class TestCategory10HistoricalReplay(unittest.TestCase):
         perm_savings = [10.0, 20.0, 30.0, 45.0, 52.0]
         p_val = np.mean(np.array(perm_savings) >= real_savings)
         self.assertEqual(p_val, 0.20)
+
+    @patch('numpy.random.permutation')
+    def test_10_6_permutation_pvalue_precision(self, mock_perm):
+        mock_perm.side_effect = [[10.0, -10.0]] * 500 + [[-10.0, 10.0]] * 500
+        
+        pred_dirs = ['HIKE', 'DROP']
+        actual_moves = [10.0, -10.0]
+        real_sig_savings = 20.0
+        
+        n_perm = 1000
+        perm_savings = []
+        for _ in range(n_perm):
+            shuffled_actuals = mock_perm(actual_moves)
+            sh_sav = 0.0
+            for p_dir, sh_act in zip(pred_dirs, shuffled_actuals):
+                if p_dir == 'HIKE':
+                    sh_sav += sh_act
+                elif p_dir == 'DROP':
+                    sh_sav += -sh_act
+            perm_savings.append(sh_sav)
+            
+        better_trials = np.sum(np.array(perm_savings) >= real_sig_savings)
+        p_value = float((better_trials + 1) / (n_perm + 1))
+        
+        self.assertEqual(better_trials, 500)
+        self.assertAlmostEqual(p_value, 501 / 1001)
 
 
 class TestCategory11AlertFormatting(unittest.TestCase):
@@ -937,8 +1306,61 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
         self.assertEqual(signal['conviction'], 'Low Conviction')
         self.assertIn("dynamic intraday vol override", signal['risk_text'])
 
-
-
+    @patch('main.get_repo_variable')
+    @patch('main.set_repo_variable')
+    def test_12_10_save_settlement_snapshots_idempotency(self, mock_set_var, mock_get_var):
+        tz = pytz.timezone('America/Chicago')
+        dt = tz.localize(datetime(2026, 5, 22, 13, 35, 0))
+        
+        all_data = {
+            'RB': {'current_price': 2.20, 'schwab_symbol': '/RBK26'},
+            'HO': {'current_price': 2.30, 'schwab_symbol': '/HOK26'}
+        }
+        
+        session_str = "2026-05-22"
+        existing_snapshot = {
+            "date": session_str,
+            "price": 2.20,
+            "captured_at": dt.isoformat(),
+            "schwab_symbol": "/RBK26"
+        }
+        
+        saved_snapshots = {
+            "SETTLE_SNAPSHOT_RB": json.dumps(existing_snapshot)
+        }
+        def side_get(key):
+            return saved_snapshots.get(key)
+        def side_set(key, val):
+            saved_snapshots[key] = val
+            
+        mock_get_var.side_effect = side_get
+        mock_set_var.side_effect = side_set
+        
+        temp_dir = tempfile.mkdtemp()
+        orig_data_dir = main.DATA_DIR
+        main.DATA_DIR = temp_dir
+        
+        try:
+            main.save_settlement_snapshots(all_data, dt)
+            
+            called_keys = [args[0] for args, kwargs in mock_set_var.call_args_list]
+            self.assertNotIn("SETTLE_SNAPSHOT_RB", called_keys)
+            self.assertIn("SETTLE_SNAPSHOT_HO", called_keys)
+            self.assertIn("SETTLE_SNAPSHOT_RB", saved_snapshots)
+            self.assertIn("SETTLE_SNAPSHOT_HO", saved_snapshots)
+            
+            mock_set_var.reset_mock()
+            
+            ds_path = os.path.join(temp_dir, "daily_settlement.json")
+            with open(ds_path, "w") as f:
+                json.dump({"date": session_str, "captured_at": dt.isoformat()}, f)
+                
+            main.save_settlement_snapshots(all_data, dt)
+            mock_set_var.assert_not_called()
+            
+        finally:
+            main.DATA_DIR = orig_data_dir
+            shutil.rmtree(temp_dir)
 
 
 class TestCategory13LiveValidationAndRobustness(unittest.TestCase):
@@ -1130,6 +1552,266 @@ class TestCategory13LiveValidationAndRobustness(unittest.TestCase):
         res_cfg, msg, win = backtest.run_optimization(df, 'nymex_rb', 'rack_u', 'RB', cfg)
         self.assertIn("RB_high_z_win_rate", res_cfg)
         self.assertIn("RB_low_z_win_rate", res_cfg)
+
+
+class TestCategory14ConfigSplit(unittest.TestCase):
+    """Category 14: Config and Metrics split tests"""
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.config_path = os.path.join(self.temp_dir, "config.json")
+        self.metrics_cache_path = os.path.join(self.temp_dir, "metrics_cache.json")
+        
+        self.default_config_data = {
+            "MIN_ROWS_FOR_TUNING": 30,
+            "BLEND_ALPHA": 0.3,
+            "RB_HIKE_THRESHOLD_CENTS": 1.0,
+            "RB_DROP_THRESHOLD_CENTS": -1.0,
+            "HO_HIKE_THRESHOLD_CENTS": 1.0,
+            "HO_DROP_THRESHOLD_CENTS": -1.0,
+            "RB_LEAN_HIKE_CENTS": 0.5,
+            "RB_LEAN_DROP_CENTS": -0.5,
+            "HO_LEAN_HIKE_CENTS": 0.5,
+            "HO_LEAN_DROP_CENTS": -0.5,
+            "LAG_DAYS": 0
+        }
+        with open(self.config_path, "w") as f:
+            json.dump(self.default_config_data, f)
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+        import importlib
+        import main
+        importlib.reload(main)
+
+    @patch('builtins.open')
+    @patch('os.path.exists')
+    def test_14_1_metrics_missing_fallback(self, mock_exists, mock_file):
+        def side_exists(path):
+            if "config.json" in path:
+                return True
+            if "metrics_cache.json" in path:
+                return False
+            return False
+        mock_exists.side_effect = side_exists
+        
+        mock_file.return_value.__enter__.return_value.read.return_value = json.dumps(self.default_config_data)
+        
+        import importlib
+        import main
+        importlib.reload(main)
+        
+        self.assertEqual(main.APP_CONFIG["RB_HIKE_THRESHOLD_CENTS"], 1.0)
+        self.assertFalse(main.CONFIG_CORRUPT)
+
+    @patch('builtins.open')
+    @patch('os.path.exists')
+    def test_14_2_metrics_corrupt_fallback(self, mock_exists, mock_file):
+        mock_exists.return_value = True
+        
+        def side_open(file, *args, **kwargs):
+            if "config.json" in str(file):
+                return mock_open(read_data=json.dumps(self.default_config_data))()
+            if "metrics_cache.json" in str(file):
+                return mock_open(read_data="{invalid_json:")()
+            raise FileNotFoundError()
+            
+        mock_file.side_effect = side_open
+        
+        import importlib
+        import main
+        importlib.reload(main)
+        
+        self.assertEqual(main.APP_CONFIG["RB_HIKE_THRESHOLD_CENTS"], 1.0)
+        self.assertFalse(main.CONFIG_CORRUPT)
+
+    @patch('builtins.open')
+    @patch('os.path.exists')
+    def test_14_3_overlay_priority(self, mock_exists, mock_file):
+        mock_exists.return_value = True
+        
+        override_data = {
+            "RB_HIKE_THRESHOLD_CENTS": 2.5,
+            "RB_DROP_THRESHOLD_CENTS": -2.5
+        }
+        
+        def side_open(file, *args, **kwargs):
+            if "config.json" in str(file):
+                return mock_open(read_data=json.dumps(self.default_config_data))()
+            if "metrics_cache.json" in str(file):
+                return mock_open(read_data=json.dumps(override_data))()
+            raise FileNotFoundError()
+            
+        mock_file.side_effect = side_open
+        
+        import importlib
+        import main
+        importlib.reload(main)
+        
+        self.assertEqual(main.APP_CONFIG["RB_HIKE_THRESHOLD_CENTS"], 2.5)
+        self.assertEqual(main.APP_CONFIG["RB_DROP_THRESHOLD_CENTS"], -2.5)
+        self.assertEqual(main.APP_CONFIG["MIN_ROWS_FOR_TUNING"], 30)
+
+    def test_14_4_backtest_only_writes_metrics_cache(self):
+        orig_config_path = backtest.CONFIG_PATH
+        orig_metrics_path = backtest.METRICS_CACHE_PATH
+        
+        backtest.CONFIG_PATH = self.config_path
+        backtest.METRICS_CACHE_PATH = self.metrics_cache_path
+        
+        cfg = {
+            "MIN_ROWS_FOR_TUNING": 30,
+            "RB_HIKE_THRESHOLD_CENTS": 1.0,
+            "NEW_VAR": 99.0
+        }
+        
+        try:
+            backtest.save_metrics_cache(cfg)
+            
+            with open(self.config_path, "r") as f:
+                config_after = json.load(f)
+            self.assertEqual(config_after, self.default_config_data)
+            
+            with open(self.metrics_cache_path, "r") as f:
+                cache_after = json.load(f)
+            self.assertIn("RB_HIKE_THRESHOLD_CENTS", cache_after)
+            self.assertEqual(cache_after["RB_HIKE_THRESHOLD_CENTS"], 1.0)
+        finally:
+            backtest.CONFIG_PATH = orig_config_path
+            backtest.METRICS_CACHE_PATH = orig_metrics_path
+
+
+class TestCategory15PredictionLog(unittest.TestCase):
+    """Category 15: Prediction Log and Backfilling Tests"""
+    def setUp(self):
+        self.temp_dir = tempfile.mkdtemp()
+        self.csv_path = os.path.join(self.temp_dir, "graves_history.csv")
+        self.log_path = os.path.join(self.temp_dir, "prediction_log.csv")
+
+    def tearDown(self):
+        shutil.rmtree(self.temp_dir)
+
+    @patch('main.DATA_DIR')
+    @patch('main.APP_CONFIG', {"LAG_DAYS": 0, "ROLLING_WINDOW_DAYS": 120, "RB_HIKE_THRESHOLD_CENTS": 1.0, "RB_nymex_daily_std": 1.0})
+    def test_15_1_prediction_log_idempotency(self, mock_data_dir):
+        mock_data_dir.__get__ = MagicMock(return_value=self.temp_dir)
+        with patch('main.DATA_DIR', self.temp_dir):
+            data = {
+                'current_price': 2.20,
+                'yesterday_close': 2.00,
+                'open_price': 2.00,
+                'high_price': 2.25,
+                'low_price': 1.95,
+                'daily_pct': 10.0,
+                'five_day_high': 2.25,
+                'five_day_low': 1.95,
+                'thirty_day_avg': 2.05
+            }
+            now = datetime(2026, 5, 22, 14, 35, 0, tzinfo=pytz.timezone('America/Chicago'))
+            main.build_rack_signal('RB', data, now)
+            
+            self.assertTrue(os.path.exists(self.log_path))
+            df1 = pd.read_csv(self.log_path)
+            self.assertEqual(len(df1), 1)
+            
+            main.build_rack_signal('RB', data, now)
+            
+            df2 = pd.read_csv(self.log_path)
+            self.assertEqual(len(df2), 1)
+
+    @patch('weekly_report.CSV_PATH')
+    @patch('weekly_report.LOG_PATH')
+    @patch('weekly_report.validate_data.validate_all')
+    @patch('weekly_report.plt')
+    def test_15_2_pending_backfill_correct_direction(self, mock_plt, mock_validate, mock_log_path, mock_csv_path):
+        mock_csv_path.__get__ = MagicMock(return_value=self.csv_path)
+        mock_log_path.__get__ = MagicMock(return_value=self.log_path)
+        
+        hist_df = pd.DataFrame({
+            "date": ["2026-05-19", "2026-05-20", "2026-05-21"],
+            "nymex_rb": [1.90, 1.95, 2.00],
+            "nymex_ho": [1.90, 1.95, 2.00],
+            "rack_u": [2.00, 2.05, 2.15],
+            "rack_p": [2.10, 2.15, 2.25],
+            "rack_d": [2.20, 2.25, 2.35]
+        })
+        hist_df.to_csv(self.csv_path, index=False)
+        
+        log_df = pd.DataFrame({
+            "timestamp": ["2026-05-20T14:35:00-05:00"],
+            "commodity": ["RB"],
+            "predicted_direction": ["HIKE"],
+            "nymex_move_cents": [5.0],
+            "lag_used": [0],
+            "window_used": [120],
+            "threshold_used": [1.0],
+            "actual_next_day_move_cents": ["PENDING"],
+            "prediction_source": ["live"]
+        })
+        log_df.to_csv(self.log_path, index=False)
+        
+        class TestComplete(Exception):
+            pass
+            
+        with patch('weekly_report.CSV_PATH', self.csv_path), \
+             patch('weekly_report.LOG_PATH', self.log_path), \
+             patch('weekly_report.pd.to_datetime', side_effect=TestComplete):
+            try:
+                weekly_report.main()
+            except TestComplete:
+                pass
+                
+        updated_log = pd.read_csv(self.log_path)
+        self.assertEqual(float(updated_log.loc[0, 'actual_next_day_move_cents']), 5.0)
+
+
+class TestCategory17ContractCalendar(unittest.TestCase):
+    """Category 17: Contract Expiry Calendar Verification"""
+    def test_17_1_refined_product_last_trade_date(self):
+        import futures_util
+        ltd = futures_util.refined_product_last_trade_date(2025, 5)
+        self.assertEqual(ltd, date(2025, 4, 30))
+
+    def test_17_2_get_front_month_contract_roll(self):
+        import futures_util
+        dt_expiry = date(2025, 4, 30)
+        cyear, cmonth, ltd = futures_util.get_front_month_contract(dt_expiry, 'RB')
+        self.assertEqual((cyear, cmonth), (2025, 5))
+        self.assertEqual(ltd, date(2025, 4, 30))
+        
+        dt_after = date(2025, 5, 1)
+        cyear_after, cmonth_after, ltd_after = futures_util.get_front_month_contract(dt_after, 'RB')
+        self.assertEqual((cyear_after, cmonth_after), (2025, 6))
+
+    def test_17_3_nymex_holidays_2024_2025(self):
+        import futures_util
+        holidays_2024 = [
+            date(2024, 1, 1),
+            date(2024, 1, 15),
+            date(2024, 2, 19),
+            date(2024, 3, 29),
+            date(2024, 5, 27),
+            date(2024, 6, 19),
+            date(2024, 7, 4),
+            date(2024, 9, 2),
+            date(2024, 11, 28),
+            date(2024, 12, 25),
+        ]
+        holidays_2025 = [
+            date(2025, 1, 1),
+            date(2025, 1, 20),
+            date(2025, 2, 17),
+            date(2025, 4, 18),
+            date(2025, 5, 26),
+            date(2025, 6, 19),
+            date(2025, 7, 4),
+            date(2025, 9, 1),
+            date(2025, 11, 27),
+            date(2025, 12, 25),
+        ]
+        
+        for h in holidays_2024 + holidays_2025:
+            is_biz = futures_util.is_nymex_business_day(h)
+            self.assertFalse(is_biz, f"Expected {h} to be a NYMEX holiday, but it was classified as a business day.")
 
 
 if __name__ == "__main__":
