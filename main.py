@@ -1181,6 +1181,9 @@ def send_sms(all_data, now, alert_context):
 
     if alert_context.get('label') == 'HEARTBEAT':
         body = f"HEARTBEAT\n\nSystem heartbeat: Fuel Tracker is active and operational. SMS gateway is functional.\n\n{time_str}"
+    elif alert_context.get('label') == 'FAILURE':
+        action_desc = alert_context.get('action', 'Workflow execution failed! Check GHA logs.')
+        body = f"SYSTEM FAILURE ALERT\n\nWarning: Fuel Tracker encountered an error.\nDetails: {action_desc}\n\n{time_str}"
     else:
         lines = [f"[{time_str}] {alert_type}"]
         lines.append("")
