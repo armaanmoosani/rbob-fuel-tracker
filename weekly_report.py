@@ -10,6 +10,7 @@ from datetime import datetime
 import validate_data
 from scipy.stats import norm
 import pytz
+import json
 
 def mask_recipient(address):
     if not address:
@@ -89,6 +90,22 @@ CSV_PATH = os.path.join(DATA_DIR, "graves_history.csv")
 TZ = pytz.timezone('America/Chicago')
 
 os.makedirs(REPORTS_DIR, exist_ok=True)
+CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
+
+def load_config():
+    defaults = {
+        "DISPATCH_SAME_DAY_RATE": 0.50
+    }
+    cfg = defaults.copy()
+    if os.path.exists(CONFIG_PATH):
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                user_cfg = json.load(f)
+                cfg.update(user_cfg)
+        except Exception:
+            pass
+    return cfg
+
 
 def main():
     if not os.path.exists(CSV_PATH):
@@ -172,6 +189,9 @@ def main():
     df_alerts = df[df['predicted_direction'].isin(['HIKE', 'DROP'])].copy()
     total_active_alerts = len(df_alerts)
     
+    cfg = load_config()
+    dispatch_rate = cfg.get("DISPATCH_SAME_DAY_RATE", 0.50)
+    
     # Lifetime metrics
     lifetime_precision = (df_alerts['is_correct'].sum() / total_active_alerts * 100) if total_active_alerts > 0 else 0.0
     lifetime_savings_cents = df_alerts['savings_cents'].sum()
@@ -179,7 +199,7 @@ def main():
     
     TRUCK_GALLONS = 8500
     lifetime_savings_dollars = (lifetime_savings_cents / 100.0) * TRUCK_GALLONS
-    est_realized_lifetime_dollars = lifetime_savings_dollars * 0.75
+    est_realized_lifetime_dollars = lifetime_savings_dollars * dispatch_rate
     avg_savings_per_truck_dollars = (avg_savings_per_active_alert_cents / 100.0) * TRUCK_GALLONS
     
     # Weekly metrics (Last 7 days activity)
@@ -196,7 +216,7 @@ def main():
     week_precision = (week_correct / week_active_fired * 100) if week_active_fired > 0 else 0.0
     week_savings_cents = df_week_alerts['savings_cents'].sum() if week_active_fired > 0 else 0.0
     week_savings_dollars = (week_savings_cents / 100.0) * TRUCK_GALLONS
-    est_realized_week_dollars = week_savings_dollars * 0.75
+    est_realized_week_dollars = week_savings_dollars * dispatch_rate
 
     # Format Recent Resolved Alerts Log for last 7 days
     recent_alerts_html = ""
@@ -564,7 +584,7 @@ def main():
                                             <div style="color: #64748b; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Weekly Savings</div>
                                             <div style="color: #22c55e; font-size: 20px; font-weight: 700; margin-top: 6px;">{week_savings_cents:+.2f}¢</div>
                                             <div style="color: #16a34a; font-size: 11px; font-weight: 600; margin-top: 2px;">(${week_savings_dollars:,.2f} Max Modeled)*</div>
-                                            <div style="color: #10b981; font-size: 10px; font-style: italic; margin-top: 2px;">~${est_realized_week_dollars:,.2f} Est. Realized</div>
+                                            <div style="color: #10b981; font-size: 10px; font-style: italic; margin-top: 2px;">~${est_realized_week_dollars:,.2f} Est. Realized ({dispatch_rate * 100:.0f}% dispatch rate)</div>
                                         </td>
                                     </tr>
                                 </table>
@@ -615,7 +635,7 @@ def main():
                                             <div style="color: #64748b; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.05em;">Hypothetical Cum. Savings</div>
                                             <div style="color: #22c55e; font-size: 22px; font-weight: 700; margin-top: 6px;">{lifetime_savings_cents:+.2f}¢/gal</div>
                                             <div style="color: #16a34a; font-size: 11px; font-weight: 600; margin-top: 2px;">(${lifetime_savings_dollars:,.2f} Max Modeled)*</div>
-                                            <div style="color: #10b981; font-size: 10px; font-style: italic; margin-top: 2px;">~${est_realized_lifetime_dollars:,.2f} Est. Realized</div>
+                                            <div style="color: #10b981; font-size: 10px; font-style: italic; margin-top: 2px;">~${est_realized_lifetime_dollars:,.2f} Est. Realized ({dispatch_rate * 100:.0f}% dispatch rate)</div>
                                         </td>
                                     </tr>
                                 </table>
@@ -628,8 +648,8 @@ def main():
                                                 * Execution Benchmark Disclaimer
                                             </p>
                                             <p style="margin: 6px 0 0 0; font-size: 11px; color: #b45309; line-height: 1.4;">
-                                                Because the system has no visibility into your physical tank levels, you will inevitably be forced to buy on some WAIT days to prevent running dry. Savings are initially modeled assuming a baseline of buying or waiting exactly one standard 8,500 gallon capacity delivery truck per active alert. 
-                                                <strong>To find your estimated realized savings:</strong> We discount modeled savings by 25% to account for physical constraints. Or, multiply your actual delivery volume by the <strong>Average Savings per Active Alert ({avg_savings_per_active_alert_cents:+.2f}&cent;/gal)</strong>.
+                                                Because the system has no visibility into your physical tank levels or carrier dispatch delays, savings calculations are initial theoretical limits. Under your load-time price lock contract with Graves Oil, orders must physically load before midnight CT to secure same-day pricing.
+                                                <strong>To find your estimated realized savings:</strong> We discount modeled savings by {100 - dispatch_rate * 100:.0f}% (based on a user-configured dispatch same-day load rate of {dispatch_rate * 100:.0f}%) to account for dispatch delays and physical capacity constraints. Or, multiply your actual delivery volume by the <strong>Average Savings per Active Alert ({avg_savings_per_active_alert_cents:+.2f}&cent;/gal)</strong>.
                                             </p>
                                         </td>
                                     </tr>

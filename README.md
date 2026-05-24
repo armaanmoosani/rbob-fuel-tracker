@@ -69,9 +69,10 @@ Consequently, the engine's correct alerts capture large moves, while incorrect a
    - **Weekly Dashboard (`weekly_report.yml`)**: Generates reports and analytics every Saturday.
    - **CI & Health (`ci.yml`, `heartbeat.yml`, `keepalive.yml`)**: Automated testing, system health notifications, and repository activity maintenance.
 3. **Configuration & Data State Storage**: 
-   - **`config.json`**: Read-only, statically schema-checked configuration file for core engine variables.
+   - **`config.json`**: Read-only, statically schema-checked configuration file for core engine variables. Note that under your load-time price lock contract, you pay the price when fuel is physically loaded, not when ordered. To reflect this, personalize `"DISPATCH_SAME_DAY_RATE"` (defaults to `0.50` as a conservative starting point). This is the single most important number to calibrate from your own Bills of Lading before trusting savings estimates in the system.
    - **`metrics_cache.json`**: Dynamically written, ephemeral state cache storing walk-forward thresholds and daily validation metrics without dirtying the static configuration.
    - **`data/*.csv`**: Lightweight, flat-file databases synced directly to the git branch.
+
 
 ---
 

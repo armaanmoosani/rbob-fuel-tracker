@@ -1944,6 +1944,101 @@ class TestCategory17ContractCalendar(unittest.TestCase):
             self.assertFalse(is_biz, f"Expected {h} to be a NYMEX holiday, but it was classified as a business day.")
 
 
+class TestCategory18OperationalPricingRules(unittest.TestCase):
+    """Category 18: Operational Pricing Rules Verification"""
+    def test_18_1_weekly_report_load_config(self):
+        import weekly_report
+        cfg = weekly_report.load_config()
+        self.assertIn("DISPATCH_SAME_DAY_RATE", cfg)
+        self.assertEqual(cfg["DISPATCH_SAME_DAY_RATE"], 0.50)
+        
+    def test_18_2_build_html_email_warnings_and_savings(self):
+        import main
+        import pytz
+        from datetime import datetime
+        now = datetime(2026, 5, 22, 14, 35, 0, tzinfo=pytz.timezone('America/Chicago'))
+        
+        all_data = {
+            'RB': {
+                'current_price': 2.10,
+                'open_price': 2.00,
+                'high_price': 2.20,
+                'low_price': 1.95,
+                'daily_pct': 5.0,
+                'yesterday_close': 2.00,
+                'five_day_high': 2.25,
+                'five_day_low': 1.95,
+                'thirty_day_avg': 2.05,
+                'chart_intraday_b64': 'mock_intra',
+                'chart_5d_b64': 'mock_5d',
+                'rack_signal': {
+                    'action': 'BUY_NOW',
+                    'label': 'Hike likely',
+                    'color': '#ef4444',
+                    'change_cents': 10.0,
+                    'basis': 'test basis',
+                    'conviction': 'High Conviction',
+                    'z_score': 1.8,
+                    'risk_text': 'Risk details'
+                }
+            }
+        }
+        
+        alert_context = {
+            'label': 'Final Verdict'
+        }
+        
+        html_body, cids = main.build_html_email("Test Subject", all_data, now, alert_context)
+        
+        # Verify no emojis
+        self.assertNotIn("⚠️", html_body)
+        
+        # Verify warnings box is present
+        self.assertIn("Operational Checklist & Dispatch Rules", html_body)
+        self.assertIn("Contract Price Lock Warning", html_body)
+        self.assertIn("demand that dispatch load the truck before midnight", html_body)
+        
+        # Verify realized savings is displayed and scaled
+        # 10.0 * 0.50 = 5.00
+        self.assertIn("Est. Realized Savings: +5.00¢/gal (at 50% same-day dispatch rate)", html_body)
+
+    def test_18_3_send_sms_suffixes(self):
+        import main
+        from unittest.mock import patch
+        from datetime import datetime
+        
+        all_data = {
+            'RB': {
+                'daily_pct': 2.0,
+                'current_price': 2.10,
+                'open_price': 2.00,
+                'high_price': 2.20,
+                'low_price': 1.95,
+                'yesterday_close': 2.00,
+                'rack_signal': {
+                    'action': 'BUY_NOW',
+                    'label': 'Hike likely',
+                    'change_cents': 10.0
+                }
+            }
+        }
+        
+        alert_context = {
+            'label': 'Final Verdict'
+        }
+        
+        with patch('main.TO_PHONE_SMS', ['1234567890@vtext.com']), \
+             patch('main.smtplib.SMTP') as mock_smtp:
+            instance = mock_smtp.return_value
+            main.send_sms(all_data, datetime.now(), alert_context)
+            
+            if instance.sendmail.called:
+                call_args = instance.sendmail.call_args[0]
+                msg_body = call_args[2]
+                self.assertIn("[Demand same-day load before midnight]", msg_body)
+                self.assertNotIn("⚠️", msg_body)
+
+
 if __name__ == "__main__":
     unittest.main()
 

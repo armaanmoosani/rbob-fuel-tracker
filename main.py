@@ -1042,13 +1042,25 @@ def build_html_email(subject, all_data, now, alert_context):
             
             conv_color = "#3b82f6" if "Moderate" in signal.get("conviction", "") else "#ef4444" if "High" in signal.get("conviction", "") else "#64748b"
             
+            dispatch_rate = APP_CONFIG.get("DISPATCH_SAME_DAY_RATE", 0.50)
+            sig_action = signal.get("action", "")
+            realized_savings_html = ""
+            if sig_action in ["BUY_NOW", "LEAN_BUY"]:
+                realized_alert_savings = signal["change_cents"] * dispatch_rate
+                realized_savings_html = f'  <span style="color:#16a34a;font-size:11px;font-weight:700;">Est. Realized Savings: {realized_alert_savings:+.2f}¢/gal (at {dispatch_rate*100:.0f}% same-day dispatch rate)</span><br>'
+            elif sig_action in ["WAIT", "LEAN_WAIT"]:
+                realized_alert_savings = -signal["change_cents"] * dispatch_rate
+                realized_savings_html = f'  <span style="color:#16a34a;font-size:11px;font-weight:700;">Est. Realized Savings: {realized_alert_savings:+.2f}¢/gal (at {dispatch_rate*100:.0f}% same-day dispatch rate)</span><br>'
+
             html_lines = [
                 f'<div style="margin-bottom: 8px;">',
                 f'  <span style="color:{signal["color"]};font-weight:800;">{name} {signal["label"].upper()}:</span> ',
                 f'  {signal["change_cents"]:+.2f} c/gal vs prior settle. ',
                 f'  <span style="color:#64748b;font-size:11px;">(Basis: {signal["basis"]})</span><br>',
             ]
-            
+            if realized_savings_html:
+                html_lines.append(realized_savings_html)
+
             if signal.get("z_score") is not None:
                 html_lines.append(
                     f'  <span style="display:inline-block;margin-top:2px;padding:1px 6px;background:#f1f5f9;border-radius:3px;font-size:10px;color:{conv_color};font-weight:700;">'
@@ -1080,6 +1092,16 @@ def build_html_email(subject, all_data, now, alert_context):
       <p style="margin:8px 0 0;font-size:11px;color:#64748b;line-height:1.5;">
         Action thresholds: Unleaded +/-{APP_CONFIG.get('RB_HIKE_THRESHOLD_CENTS', 1.0):.2f} c/gal | Diesel +/-{APP_CONFIG.get('HO_HIKE_THRESHOLD_CENTS', 1.0):.2f} c/gal. Confidence levels are adjusted dynamically using rolling historical volatility.
       </p>
+    </div>
+    <div style="padding:14px 20px;background:#fffbeb;border-left:4px solid #d97706;border:1px solid #fde68a;margin-bottom:15px;border-radius:4px;">
+      <p style="margin:0 0 6px;font-size:11px;color:#b45309;text-transform:uppercase;letter-spacing:0.05em;font-weight:800;margin-bottom:8px;">
+        Operational Checklist & Dispatch Rules
+      </p>
+      <ul style="margin:0;padding-left:20px;font-size:12px;color:#451a03;line-height:1.6;">
+        <li><strong>Contract Price Lock Warning:</strong> Under your Graves Oil contract, prices lock at <em>physical loading time</em>, not order time. For BUY alerts, you must demand that dispatch load the truck before midnight CT. If loaded the next morning, you will pay the hiked price.</li>
+        <li><strong>Inventory & Holding Cost Check:</strong> Do not top off tanks unless you have at least 2,000–3,000 gallons of spare capacity. Ensure the arbitrage savings exceed the cost of tying up capital.</li>
+        <li><strong>Run-Dry Check:</strong> If this is a WAIT alert, do not delay the order if your tanks will run below safety margins before tomorrow. Running dry is far more costly than missing an arbitrage window.</li>
+      </ul>
     </div>'''
     elif alert_context.get('action'):
         ac = alert_context.get('action_color', '#64748b')
@@ -1193,10 +1215,18 @@ def send_sms(all_data, now, alert_context):
             rb = all_data.get('RB')
             ho = all_data.get('HO')
             
+            has_hike = False
+            has_wait = False
+            
             if rb and rb.get('rack_signal'):
                 signal = rb['rack_signal']
                 if signal.get('change_cents') is not None:
                     lines.append(f"Gas: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
+                    sig_action = signal.get("action", "")
+                    if "BUY" in sig_action:
+                        has_hike = True
+                    elif "WAIT" in sig_action:
+                        has_wait = True
                     if signal.get('conviction'):
                         lines.append(f"  Conviction: {signal['conviction']}")
                     if signal.get('risk_text'):
@@ -1206,10 +1236,20 @@ def send_sms(all_data, now, alert_context):
                 signal = ho['rack_signal']
                 if signal.get('change_cents') is not None:
                     lines.append(f"Diesel: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
+                    sig_action = signal.get("action", "")
+                    if "BUY" in sig_action:
+                        has_hike = True
+                    elif "WAIT" in sig_action:
+                        has_wait = True
                     if signal.get('conviction'):
                         lines.append(f"  Conviction: {signal['conviction']}")
                     if signal.get('risk_text'):
                         lines.append(f"  {signal['risk_text']}")
+            
+            if has_hike:
+                lines.append("[Demand same-day load before midnight]")
+            if has_wait:
+                lines.append("[Confirm tank levels before waiting]")
                 
             lines.append("")
         
@@ -1377,6 +1417,9 @@ def send_daily_prompt(now):
 def main():
     # Assert Chicago timezone is correctly recognized (Issue 10.1)
     assert TZ.zone == 'America/Chicago', "TimeZone mismatch: America/Chicago expected."
+    
+    dispatch_rate = APP_CONFIG.get("DISPATCH_SAME_DAY_RATE", 0.50)
+    print(f"System initialized. Active DISPATCH_SAME_DAY_RATE: {dispatch_rate:.2f} ({dispatch_rate * 100:.0f}%)")
     
     start_time = datetime.now(timezone.utc)
     now = datetime.now(TZ)
