@@ -4,20 +4,34 @@ import pandas as pd
 import numpy as np
 import hashlib
 import json
+from datetime import date, timedelta
+
+def get_good_friday(year):
+    # Meeus/Jones/Butcher algorithm for Gregorian Easter
+    a = year % 19
+    b = year // 100
+    c = year % 100
+    d = b // 4
+    e = b % 4
+    f = (b + 8) // 25
+    g = (b - f + 1) // 3
+    h = (19 * a + b - d - g + 15) % 30
+    i = c // 4
+    k = c % 4
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
+    easter = date(year, month, day)
+    return easter - timedelta(days=2)
 
 def is_cme_holiday(dt):
     year, month, day = dt.year, dt.month, dt.day
     dow = dt.dayofweek if hasattr(dt, 'dayofweek') else dt.weekday() # 0 is Monday, 6 is Sunday
     
-    # Good Friday dates (NYMEX holiday)
-    good_fridays = {
-        2023: (4, 7),
-        2024: (3, 29),
-        2025: (4, 18),
-        2026: (4, 3),
-        2027: (3, 26)
-    }
-    if year in good_fridays and (month, day) == good_fridays[year]:
+    # Good Friday (NYMEX holiday)
+    good_friday = get_good_friday(year)
+    if date(year, month, day) == good_friday:
         return True
 
     # New Year's Day
@@ -182,6 +196,11 @@ def validate_graves_history(csv_path):
             sys.exit(1)
 
     # Sudden daily spikes/drops (> $1.00)
+    # NOTE: The threshold is $1.00 per gallon (which is equivalent to 100 cents/gal).
+    # NYMEX futures and rack prices can experience high volatility (e.g. moves up to $0.40/gal in a single day
+    # during extreme events like Gulf hurricanes or geopolitical shocks). A threshold of $1.00/gal provides
+    # an extremely safe margin to avoid false positives on legitimate major market events while effectively
+    # catching gross data entry errors (e.g. missing decimal points, mismatched columns, or duplicated entries).
     for col in price_cols:
         col_clean = df[['date', col]].dropna().copy()
         if len(col_clean) > 1:

@@ -1038,6 +1038,93 @@ class TestCategory13LiveValidationAndRobustness(unittest.TestCase):
         self.assertIn("WARNING: Entry already exists in prediction log", output)
         self.assertIn("Skipping safely to prevent duplicate/overwrite", output)
 
+    def test_13_4_programmatic_good_friday(self):
+        from datetime import date
+        # Good Fridays:
+        # 2023: April 7
+        # 2024: March 29
+        # 2025: April 18
+        # 2026: April 3
+        # 2027: March 26
+        # 2028: April 14 (Easter Sunday is April 16)
+        self.assertEqual(validate_data.get_good_friday(2023), date(2023, 4, 7))
+        self.assertEqual(validate_data.get_good_friday(2024), date(2024, 3, 29))
+        self.assertEqual(validate_data.get_good_friday(2025), date(2025, 4, 18))
+        self.assertEqual(validate_data.get_good_friday(2026), date(2026, 4, 3))
+        self.assertEqual(validate_data.get_good_friday(2027), date(2027, 3, 26))
+        self.assertEqual(validate_data.get_good_friday(2028), date(2028, 4, 14))
+
+        # Check holiday detection
+        self.assertTrue(validate_data.is_cme_holiday(date(2028, 4, 14)))
+
+    def test_13_5_regex_lookahead_limit(self):
+        # 1. Standard matching
+        self.assertEqual(ingest_prices.extract_price_near_label("E10 - UNLEADED: $2.10", "E10 - UNLEADED"), 2.10)
+        
+        # 2. Match should NOT cross line boundary
+        body_with_newline = "E10 - UNLEADED\nCLEAR DIESEL: $2.50"
+        self.assertIsNone(ingest_prices.extract_price_near_label(body_with_newline, "E10 - UNLEADED"))
+        
+        # 3. Match should NOT exceed 60 characters
+        long_body = "E10 - UNLEADED " + ("x" * 65) + " $2.10"
+        self.assertIsNone(ingest_prices.extract_price_near_label(long_body, "E10 - UNLEADED"))
+
+    @patch('imaplib.IMAP4_SSL')
+    def test_13_6_imap_retry_logic(self, mock_imap_ssl):
+        from unittest.mock import call
+        # Simulate IMAP connection failing twice then succeeding
+        mock_conn = MagicMock()
+        mock_imap_ssl.side_effect = [
+            Exception("Connection timed out"),
+            Exception("Server busy"),
+            mock_conn
+        ]
+        
+        with patch('time.sleep') as mock_sleep:
+            date_str, prices = ingest_prices.check_inbox_for_prices("2026-05-22")
+            
+            self.assertEqual(mock_imap_ssl.call_count, 3)
+            self.assertEqual(mock_sleep.call_count, 2)
+            mock_sleep.assert_has_calls([call(2), call(4)])
+
+    def test_13_7_backtest_clamp_bounds(self):
+        # Mock delta series
+        delta_nymex = pd.Series([2.0] * 10)
+        delta_rack = pd.Series([2.0] * 10)
+        
+        # Custom clamp bounds: min 1.0, max 2.5
+        h, d = backtest.train_thresholds(delta_nymex, delta_rack, Hp=15, Dp=85, clamp_bounds=(1.0, 2.5, -2.5, -1.0))
+        self.assertEqual(h, 2.0)
+        
+        # Clamp triggering min
+        delta_low = pd.Series([0.5] * 10)
+        h, d = backtest.train_thresholds(delta_low, delta_rack, Hp=15, Dp=85, clamp_bounds=(1.0, 2.5, -2.5, -1.0))
+        self.assertEqual(h, 1.0) # clamped to min 1.0
+
+    def test_13_8_conviction_smoothed_thresholds(self):
+        # Verify conviction loop smoothing starts correctly and runs with the alpha blend
+        cfg = {
+            "RB_HIKE_THRESHOLD_CENTS": 1.0,
+            "RB_DROP_THRESHOLD_CENTS": -1.0,
+            "BLEND_ALPHA": 0.5,
+            "CLAMP_HIKE_MIN": 0.3,
+            "CLAMP_HIKE_MAX": 3.0,
+            "CLAMP_DROP_MIN": -3.0,
+            "CLAMP_DROP_MAX": -0.3
+        }
+        # Create a mock dataframe of 50 rows
+        dates = pd.date_range("2026-01-01", periods=50)
+        df = pd.DataFrame({
+            "date": dates,
+            "nymex_rb": np.linspace(2.0, 2.5, 50),
+            "rack_u": np.linspace(2.1, 2.6, 50)
+        })
+        
+        # Just run optimization to verify it executes conviction loop without errors
+        res_cfg, msg, win = backtest.run_optimization(df, 'nymex_rb', 'rack_u', 'RB', cfg)
+        self.assertIn("RB_high_z_win_rate", res_cfg)
+        self.assertIn("RB_low_z_win_rate", res_cfg)
+
 
 if __name__ == "__main__":
     unittest.main()

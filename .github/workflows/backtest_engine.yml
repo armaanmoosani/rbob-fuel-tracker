@@ -5,6 +5,10 @@ on:
     - cron: '0 3 * * 1' # Runs at 3:00 AM UTC on Mondays (Sunday 9:00 PM CT)
   workflow_dispatch:
 
+concurrency:
+  group: rbob-tracker
+  cancel-in-progress: false
+
 jobs:
   backtest:
     runs-on: ubuntu-latest

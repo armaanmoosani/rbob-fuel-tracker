@@ -12,10 +12,7 @@ CSV_PATH = os.path.join(DATA_DIR, "graves_history.csv")
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
 
 def load_config():
-    if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r") as f:
-            return json.load(f)
-    return {
+    defaults = {
         "MIN_ROWS_FOR_TUNING": 30,
         "PRICE_MIN": 1.50,
         "PRICE_MAX": 6.00,
@@ -29,8 +26,23 @@ def load_config():
         "HO_LEAN_HIKE_CENTS": 0.5,
         "HO_LEAN_DROP_CENTS": -0.5,
         "LAG_DAYS": 0,
-        "ROLLING_WINDOW_DAYS": 120
+        "ROLLING_WINDOW_DAYS": 120,
+        "CLAMP_HIKE_MIN": 0.3,
+        "CLAMP_HIKE_MAX": 3.0,
+        "CLAMP_DROP_MIN": -3.0,
+        "CLAMP_DROP_MAX": -0.3
     }
+    if os.path.exists(CONFIG_PATH):
+        with open(CONFIG_PATH, "r") as f:
+            try:
+                cfg = json.load(f)
+                for k, v in defaults.items():
+                    if k not in cfg:
+                        cfg[k] = v
+                return cfg
+            except Exception:
+                pass
+    return defaults
 
 def save_config(cfg):
     tmp_path = CONFIG_PATH + ".tmp"
@@ -79,10 +91,15 @@ def get_clean_deltas(df, nymex_col, rack_col):
 
     return df_clean['delta_nymex'], df_clean['delta_rack']
 
-def train_thresholds(delta_nymex, delta_rack, Hp, Dp):
+def train_thresholds(delta_nymex, delta_rack, Hp, Dp, clamp_bounds=None):
     """
     Train thresholds on cleaned daily price changes.
     """
+    if clamp_bounds is None:
+        hike_min, hike_max, drop_min, drop_max = 0.3, 3.0, -3.0, -0.3
+    else:
+        hike_min, hike_max, drop_min, drop_max = clamp_bounds
+
     if len(delta_nymex) < 10:
         return 1.0, -1.0
 
@@ -92,16 +109,16 @@ def train_thresholds(delta_nymex, delta_rack, Hp, Dp):
     hike_thresh = 1.0
     if hike_mask.sum() >= 5:
         raw_hike = np.percentile(delta_nymex[hike_mask], Hp)
-        hike_thresh = clamp(raw_hike, 0.3, 3.0)
+        hike_thresh = clamp(raw_hike, hike_min, hike_max)
 
     drop_thresh = -1.0
     if drop_mask.sum() >= 5:
         raw_drop = np.percentile(delta_nymex[drop_mask], Dp)
-        drop_thresh = clamp(raw_drop, -3.0, -0.3)
+        drop_thresh = clamp(raw_drop, drop_min, drop_max)
 
     return hike_thresh, drop_thresh
 
-def simulate_walk_forward(df, nymex_col, rack_col, W, Hp, Dp):
+def simulate_walk_forward(df, nymex_col, rack_col, W, Hp, Dp, clamp_bounds=None):
     """
     Simulates walk-forward out-of-sample testing on 3 folds.
     Returns the median savings across all folds.
@@ -129,7 +146,7 @@ def simulate_walk_forward(df, nymex_col, rack_col, W, Hp, Dp):
 
         # Clean and get training deltas
         train_nymex, train_rack = get_clean_deltas(df_train, nymex_col, rack_col)
-        hike_thresh, drop_thresh = train_thresholds(train_nymex, train_rack, Hp, Dp)
+        hike_thresh, drop_thresh = train_thresholds(train_nymex, train_rack, Hp, Dp, clamp_bounds)
 
         # Evaluate on out-of-sample test window using pre-computed deltas to avoid boundary loss
         test_nymex = df_test['delta_nymex']
@@ -156,6 +173,13 @@ def run_optimization(df, nymex_col, rack_col, prefix, cfg):
     using median out-of-sample savings, trains final thresholds,
     and returns metrics.
     """
+    # Expose clamp thresholds from config
+    hike_min = cfg.get("CLAMP_HIKE_MIN", 0.3)
+    hike_max = cfg.get("CLAMP_HIKE_MAX", 3.0)
+    drop_min = cfg.get("CLAMP_DROP_MIN", -3.0)
+    drop_max = cfg.get("CLAMP_DROP_MAX", -0.3)
+    clamp_bounds = (hike_min, hike_max, drop_min, drop_max)
+
     # Pre-compute deltas on full history to prevent out-of-sample window boundary loss
     df = df.copy()
     df['delta_nymex'] = df[nymex_col].diff() * 100
@@ -172,7 +196,7 @@ def run_optimization(df, nymex_col, rack_col, prefix, cfg):
     for W in windows:
         for Hp in hike_percentiles:
             for Dp in drop_percentiles:
-                med_sav = simulate_walk_forward(df, nymex_col, rack_col, W, Hp, Dp)
+                med_sav = simulate_walk_forward(df, nymex_col, rack_col, W, Hp, Dp, clamp_bounds)
                 if med_sav > best_median_savings:
                     best_median_savings = med_sav
                     best_params = (W, Hp, Dp)
@@ -190,7 +214,7 @@ def run_optimization(df, nymex_col, rack_col, prefix, cfg):
     # Train final thresholds on the last opt_W days of history
     df_final_train = df.tail(opt_W)
     final_nymex, final_rack = get_clean_deltas(df_final_train, nymex_col, rack_col)
-    raw_hike, raw_drop = train_thresholds(final_nymex, final_rack, opt_Hp, opt_Dp)
+    raw_hike, raw_drop = train_thresholds(final_nymex, final_rack, opt_Hp, opt_Dp, clamp_bounds)
 
     # Smooth the thresholds against config
     old_hike = cfg.get(f"{prefix}_HIKE_THRESHOLD_CENTS", 1.0)
@@ -252,6 +276,10 @@ def run_optimization(df, nymex_col, rack_col, prefix, cfg):
         "low": {"alerts": 0, "correct": 0, "savings": []}
     }
     
+    # Starting points for sequential out-of-sample smoothing
+    curr_smoothed_h = old_hike
+    curr_smoothed_d = old_drop
+    
     for i in range(opt_W, len(df)):
         df_train = df.iloc[i - opt_W:i]
         df_today = df.iloc[i]
@@ -259,7 +287,11 @@ def run_optimization(df, nymex_col, rack_col, prefix, cfg):
         train_nymex, train_rack = get_clean_deltas(df_train, nymex_col, rack_col)
         if len(train_nymex) < 20:
             continue
-        h_t, d_t = train_thresholds(train_nymex, train_rack, opt_Hp, opt_Dp)
+        h_t, d_t = train_thresholds(train_nymex, train_rack, opt_Hp, opt_Dp, clamp_bounds)
+        
+        # Sequentially smooth the thresholds using the same Blend Alpha
+        curr_smoothed_h = round(alpha * h_t + (1 - alpha) * curr_smoothed_h, 2)
+        curr_smoothed_d = round(alpha * d_t + (1 - alpha) * curr_smoothed_d, 2)
         
         nymex_std_t = float(train_nymex.std()) if len(train_nymex) > 1 else 1.0
         
@@ -283,11 +315,11 @@ def run_optimization(df, nymex_col, rack_col, prefix, cfg):
         saved = 0.0
         is_correct = False
         
-        if ch >= h_t:
+        if ch >= curr_smoothed_h:
             triggered = True
             saved = act
             is_correct = (act > 0)
-        elif ch <= d_t:
+        elif ch <= curr_smoothed_d:
             triggered = True
             saved = -act
             is_correct = (act < 0)

@@ -302,16 +302,13 @@ def main():
     raw_current_alerts = len(df[(df['timestamp_dt'] >= current_week_start) & (df['predicted_direction'].isin(['HIKE', 'DROP']))])
 
     # Count roll days in the last 7 calendar days
-    for var in ['GH_PAT', 'GH_REPO', 'GMAIL_USER', 'GMAIL_APP_PASSWORD', 'TO_EMAIL']:
-        if var not in os.environ:
-            os.environ[var] = 'mock_value'
-    import main
+    from futures_util import is_contract_roll_day
     def get_roll_days_count(start_dt, end_dt):
         count = 0
         try:
             for dt in pd.date_range(start_dt.date(), end_dt.date()):
                 if dt.weekday() < 5:
-                    if main.is_contract_roll_day(dt, 'RB') or main.is_contract_roll_day(dt, 'HO'):
+                    if is_contract_roll_day(dt, 'RB') or is_contract_roll_day(dt, 'HO'):
                         count += 1
         except Exception:
             pass

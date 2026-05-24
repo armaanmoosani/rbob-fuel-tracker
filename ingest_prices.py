@@ -123,7 +123,7 @@ LABELS = {
 }
 
 def extract_price_near_label(text, label):
-    pattern = rf'{re.escape(label)}.*?\$?(\d+\.\d{{2,5}})'
+    pattern = rf'{re.escape(label)}[^\n]{{0,60}}?\$?(\d+\.\d{{2,5}})'
     match = re.search(pattern, text, re.IGNORECASE)
     if match:
         return float(match.group(1))
@@ -146,9 +146,21 @@ def check_inbox_for_prices(target_date_str):
     except Exception as cfg_e:
         print(f"Error loading price bounds config: {mask_sensitive_text(cfg_e)}")
         
+    import time
+    mail = None
+    for attempt in range(3):
+        try:
+            mail = imaplib.IMAP4_SSL("imap.gmail.com", timeout=15)
+            mail.login(GRAVES_EMAIL, GRAVES_APP_PASSWORD)
+            break
+        except Exception as conn_e:
+            print(f"IMAP connection/login attempt {attempt + 1} failed: {mask_sensitive_text(conn_e)}")
+            if attempt < 2:
+                time.sleep(2 * (attempt + 1))
+            else:
+                return None, None
+
     try:
-        mail = imaplib.IMAP4_SSL("imap.gmail.com")
-        mail.login(GRAVES_EMAIL, GRAVES_APP_PASSWORD)
         mail.select('"[Gmail]/All Mail"')
         
         # Look back 2 days to handle any timezone/date boundary differences
@@ -268,6 +280,7 @@ def get_github_settlement_snapshots(target_date_str):
 
 def main():
     print("Starting SMS ingest...")
+    git_pull_rebase()
     validate_data.validate_all(DATA_DIR)
     
     # Calculate target date based on Chicago timezone local hour
