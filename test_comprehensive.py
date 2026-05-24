@@ -2041,7 +2041,8 @@ class TestCategory18OperationalPricingRules(unittest.TestCase):
                 self.assertIn("[Demand same-day load before midnight]", payload)
                 self.assertNotIn("⚠️", payload)
 
-    def test_18_4_low_conviction_recommendation_text(self):
+    @patch('main.get_repo_variable', return_value=None)
+    def test_18_4_low_conviction_recommendation_text(self, mock_get_var):
         import main
         import pytz
         from datetime import datetime
