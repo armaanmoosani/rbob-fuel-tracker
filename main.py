@@ -1243,7 +1243,7 @@ def send_sms(all_data, now, alert_context):
                     conv_short = conv.replace(' Conviction', '') if conv else ''
                     lines.append(f"{short}: {kw} | {conv_short} | {chg:+.2f}c")
         # Price summary — one compact line per commodity
-        for prefix, abbr in [('RB', 'RB'), ('HO', 'HO')]:
+        for prefix, abbr in [('RB', 'Unleaded'), ('HO', 'Diesel')]:
             info = all_data.get(prefix)
             if not info:
                 continue
@@ -1271,8 +1271,8 @@ def send_sms(all_data, now, alert_context):
             alert_type = 'UPDATE'
 
         lines = [f"[{time_str}] {alert_type}"]
-        # One compact line per commodity: RB: $3.3351 (-3.44% | -$0.1188)
-        for prefix, abbr in [('RB', 'RB'), ('HO', 'HO')]:
+        # One compact line per commodity: Unleaded: $3.3351 (-3.44% | -$0.1188)
+        for prefix, abbr in [('RB', 'Unleaded'), ('HO', 'Diesel')]:
             info = all_data.get(prefix)
             if not info:
                 continue
