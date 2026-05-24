@@ -7,10 +7,9 @@ import shutil
 import pandas as pd
 import numpy as np
 import re
-from datetime import datetime, timedelta, date
+from datetime import datetime, timedelta
 import pytz
 from unittest.mock import patch, MagicMock, mock_open, call
-from scipy import stats
 
 # Add current directory to path
 sys.path.append(os.path.dirname(__file__))
@@ -445,6 +444,20 @@ class TestCategory3SettlementCapture(unittest.TestCase):
             target_date_str = now_local.date().isoformat()
         self.assertEqual(target_date_str, "2026-05-18")
 
+    def test_3_7_get_session_start(self):
+        import main
+        tz = pytz.timezone('America/Chicago')
+        
+        # Test 16:59:59 -> session start should be previous day 17:00
+        dt_1659 = tz.localize(datetime(2026, 5, 22, 16, 59, 59))
+        start_1659 = main.get_session_start(dt_1659)
+        self.assertEqual(start_1659, tz.localize(datetime(2026, 5, 21, 17, 0, 0)))
+        
+        # Test 17:00:00 -> session start should be same day 17:00
+        dt_1700 = tz.localize(datetime(2026, 5, 22, 17, 0, 0))
+        start_1700 = main.get_session_start(dt_1700)
+        self.assertEqual(start_1700, tz.localize(datetime(2026, 5, 22, 17, 0, 0)))
+
 
 class TestCategory4LagDiscovery(unittest.TestCase):
     """Category 4: Lag Discovery Math Tests"""
@@ -824,6 +837,36 @@ class TestCategory9AlertLogic(unittest.TestCase):
             # Slightly above lean_drop (-0.49c) -> NO_EDGE
             self.assertEqual(get_act(1.9951), "NO_EDGE")
 
+    def test_9_7_run_simulation(self):
+        import verify_statistics
+        # Create a mock df slice with delta_nymex and delta_rack
+        df = pd.DataFrame({
+            'delta_nymex': [1.5, -2.0, 0.5, 2.0, -1.0, 0.0],
+            'delta_rack': [2.0, -1.0, 0.2, -0.5, -0.5, 0.1]
+        })
+        savings, precision, total, per_alert_savings = verify_statistics.run_simulation(
+            df, hike_thresh=1.0, drop_thresh=-1.5, nymex_col='delta_nymex', rack_col='delta_rack'
+        )
+        self.assertAlmostEqual(savings, 2.5)
+        self.assertAlmostEqual(precision, 2.0 / 3.0)
+        self.assertEqual(total, 3)
+        self.assertEqual(per_alert_savings, [2.0, 1.0, -0.5])
+
+    def test_9_8_tune_thresholds(self):
+        import verify_statistics
+        # Create mock df_train (need >= 10 rows to avoid default returns)
+        df = pd.DataFrame({
+            'nymex': [1.0, 1.01, 1.03, 1.06, 1.10, 1.15, 1.21, 1.28, 1.36, 1.45, 1.55, 1.66],
+            'rack':  [2.0, 2.02, 2.05, 2.09, 2.14, 2.20, 2.27, 2.35, 2.44, 2.54, 2.65, 2.77]
+        })
+        hike_thresh, drop_thresh, slope, r2 = verify_statistics.tune_thresholds(
+            df, nymex_col='nymex', rack_col='rack', Hp=15, Dp=85
+        )
+        self.assertTrue(hike_thresh >= 0.3)
+        self.assertEqual(drop_thresh, -1.0)
+        self.assertAlmostEqual(slope, 1.0)
+        self.assertAlmostEqual(r2, 1.0)
+
 
 class TestCategory10HistoricalReplay(unittest.TestCase):
     """Category 10: Historical Replay Tests"""
@@ -884,6 +927,7 @@ class TestCategory10HistoricalReplay(unittest.TestCase):
             self.assertTrue(train_dates.isdisjoint(test_dates))
 
     def test_10_3_lag_0_correlation_real_data(self):
+        from scipy import stats
         df = pd.read_csv(backtest.CSV_PATH)
         self.assertTrue(len(df) >= 766)
         
@@ -1117,6 +1161,25 @@ class TestCategory11AlertFormatting(unittest.TestCase):
         self.assertIn("standard 8,500-gallon truck", html)
         self.assertIn("29.78¢/gal", html)
 
+    def test_1_4_mask_recipient(self):
+        import weekly_report
+        # None address
+        self.assertEqual(weekly_report.mask_recipient(None), "None")
+        
+        # Email address
+        self.assertEqual(weekly_report.mask_recipient("abc@gmail.com"), "***@gmail.com")
+        self.assertEqual(weekly_report.mask_recipient("john.doe@domain.co"), "jo***e@domain.co")
+        
+        # Phone / Non-email address
+        self.assertEqual(weekly_report.mask_recipient("123"), "***")
+        self.assertEqual(weekly_report.mask_recipient("+15551234567"), "+1***67")
+        
+        # List of addresses
+        self.assertEqual(weekly_report.mask_recipient(["abc@gmail.com", "123"]), ["***@gmail.com", "***"])
+        
+        # Comma-separated addresses
+        self.assertEqual(weekly_report.mask_recipient("abc@gmail.com, 123"), ["***@gmail.com", "***"])
+
 
 class TestCategory12ProductionFailureProtection(unittest.TestCase):
     """Category 12: Production Failure Protection & Edge Cases"""
@@ -1223,11 +1286,9 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
 
     @patch('yfinance.Ticker')
     @patch('main.previous_nymex_business_day')
-    @patch('pandas.read_csv')
-    def test_12_5_yfinance_stale_cache_fallback(self, mock_read_csv, mock_prev_day, mock_ticker):
+    def test_12_5_yfinance_stale_cache_fallback(self, mock_prev_day, mock_ticker):
         # Mock yesterday's date as 2026-05-21, but yfinance history returns last date 2026-05-20 (stale)
         mock_prev_day.return_value = datetime(2026, 5, 21).date()
-        mock_read_csv.return_value = pd.DataFrame() # empty df forces CSV fallback to return None
         
         mock_history = MagicMock()
         # Mock 1mo daily history
@@ -1243,7 +1304,15 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
         
         # Test baseline extraction fallback in fetch_commodity
         cfg = {'name': 'Wholesale Gas', 'yf_symbol': 'RB=F'}
-        res = main.fetch_commodity('RB', cfg, datetime(2026, 5, 22), None)
+        
+        original_open = open
+        with patch('builtins.open') as mock_op:
+            def mock_open_fn(file, *args, **kwargs):
+                if "graves_history.csv" in str(file):
+                    raise FileNotFoundError()
+                return original_open(file, *args, **kwargs)
+            mock_op.side_effect = mock_open_fn
+            res = main.fetch_commodity('RB', cfg, datetime(2026, 5, 22), None)
         
         # yesterday_close should be overridden to None because cache was stale (last date 2026-05-20 < 2026-05-21) and CSV is empty
         self.assertIsNone(res['yesterday_close'])
@@ -1553,6 +1622,62 @@ class TestCategory13LiveValidationAndRobustness(unittest.TestCase):
         self.assertIn("RB_high_z_win_rate", res_cfg)
         self.assertIn("RB_low_z_win_rate", res_cfg)
 
+    def test_13_4_get_decoupling_warning(self):
+        import main
+        temp_dir = tempfile.mkdtemp()
+        try:
+            with patch('main.DATA_DIR', temp_dir):
+                log_path = os.path.join(temp_dir, "prediction_log.csv")
+                
+                # Scenario A: Log file doesn't exist -> should return ""
+                now = datetime(2026, 5, 22, 12, 0, 0, tzinfo=pytz.timezone('America/Chicago'))
+                self.assertEqual(main.get_decoupling_warning('RB', now), "")
+                
+                # Scenario B: Less than 5 actionable alerts in last 14 days -> should return ""
+                df_few = pd.DataFrame({
+                    "timestamp": ["2026-05-20T12:00:00-05:00"] * 4,
+                    "commodity": ["RB"] * 4,
+                    "predicted_direction": ["HIKE"] * 4,
+                    "nymex_move_cents": [2.0] * 4,
+                    "lag_used": [0] * 4,
+                    "window_used": [120] * 4,
+                    "threshold_used": [1.0] * 4,
+                    "actual_next_day_move_cents": [-1.0] * 4
+                })
+                df_few.to_csv(log_path, index=False)
+                self.assertEqual(main.get_decoupling_warning('RB', now), "")
+                
+                # Scenario C: 5 actionable alerts in last 14 days, win rate >= 40% -> should return ""
+                df_win = pd.DataFrame({
+                    "timestamp": ["2026-05-20T12:00:00-05:00"] * 5,
+                    "commodity": ["RB"] * 5,
+                    "predicted_direction": ["HIKE"] * 5,
+                    "nymex_move_cents": [2.0] * 5,
+                    "lag_used": [0] * 5,
+                    "window_used": [120] * 5,
+                    "threshold_used": [1.0] * 5,
+                    "actual_next_day_move_cents": [2.0, 2.0, -1.0, 2.0, -1.0]
+                })
+                df_win.to_csv(log_path, index=False)
+                self.assertEqual(main.get_decoupling_warning('RB', now), "")
+                
+                # Scenario D: 5 actionable alerts in last 14 days, win rate < 40% -> should return warning
+                df_lose = pd.DataFrame({
+                    "timestamp": ["2026-05-20T12:00:00-05:00"] * 5,
+                    "commodity": ["RB"] * 5,
+                    "predicted_direction": ["HIKE"] * 5,
+                    "nymex_move_cents": [2.0] * 5,
+                    "lag_used": [0] * 5,
+                    "window_used": [120] * 5,
+                    "threshold_used": [1.0] * 5,
+                    "actual_next_day_move_cents": [-1.0, -2.0, 2.0, -0.5, -1.5]
+                })
+                df_lose.to_csv(log_path, index=False)
+                warn_msg = main.get_decoupling_warning('RB', now)
+                self.assertIn("decoupled from NYMEX", warn_msg)
+        finally:
+            shutil.rmtree(temp_dir)
+
 
 class TestCategory14ConfigSplit(unittest.TestCase):
     """Category 14: Config and Metrics split tests"""
@@ -1770,11 +1895,13 @@ class TestCategory17ContractCalendar(unittest.TestCase):
     """Category 17: Contract Expiry Calendar Verification"""
     def test_17_1_refined_product_last_trade_date(self):
         import futures_util
+        from datetime import date
         ltd = futures_util.refined_product_last_trade_date(2025, 5)
         self.assertEqual(ltd, date(2025, 4, 30))
 
     def test_17_2_get_front_month_contract_roll(self):
         import futures_util
+        from datetime import date
         dt_expiry = date(2025, 4, 30)
         cyear, cmonth, ltd = futures_util.get_front_month_contract(dt_expiry, 'RB')
         self.assertEqual((cyear, cmonth), (2025, 5))
@@ -1786,6 +1913,7 @@ class TestCategory17ContractCalendar(unittest.TestCase):
 
     def test_17_3_nymex_holidays_2024_2025(self):
         import futures_util
+        from datetime import date
         holidays_2024 = [
             date(2024, 1, 1),
             date(2024, 1, 15),

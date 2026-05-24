@@ -13,7 +13,7 @@ Change PREVIEW_MODE near the bottom to see different alert types:
     'routine'     — scheduled 6-hour update
 """
 
-import os, io, base64, uuid
+import os, io, base64
 from datetime import datetime
 import pytz
 import yfinance as yf

@@ -1646,12 +1646,16 @@ def fetch_commodity(prefix, cfg, now, access_token):
     history_5d = []
     try:
         yf_t = yf.Ticker(dynamic_yf_symbol)
-        h5d = yf_t.history(period='5d', interval='1h')
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            fut_5d = executor.submit(yf_t.history, period='5d', interval='1h')
+            fut_30d = executor.submit(yf_t.history, period='1mo', interval='1d')
+            h5d = fut_5d.result()
+            h30d = fut_30d.result()
+
         if not h5d.empty:
-            history_5d = [{"t": idx.astimezone(TZ).isoformat(), "p": round(float(row['Close']), 4)} for idx, row in h5d.iterrows()]
+            history_5d = [{"t": idx.astimezone(TZ).isoformat(), "p": round(float(price), 4)} for idx, price in zip(h5d.index, h5d['Close'])]
             five_day_high = float(h5d['High'].max())
             five_day_low  = float(h5d['Low'].min())
-        h30d = yf_t.history(period='1mo', interval='1d')
         if not h30d.empty:
             session_date_str = get_session_date_str(now)
             session_date = datetime.fromisoformat(session_date_str).date()
@@ -1676,11 +1680,19 @@ def fetch_commodity(prefix, cfg, now, access_token):
 
     if yesterday_close is None:
         try:
-            import pandas as pd
-            df = pd.read_csv(os.path.join(DATA_DIR, "graves_history.csv"))
-            col_name = "nymex_rb" if "RB" in dynamic_yf_symbol else "nymex_ho"
-            if not df.empty:
-                yesterday_close = float(df[col_name].iloc[-1])
+            col_idx = 1 if "RB" in dynamic_yf_symbol else 2
+            csv_file_path = os.path.join(DATA_DIR, "graves_history.csv")
+            if os.path.exists(csv_file_path):
+                with open(csv_file_path, "r") as f:
+                    for line in f:
+                        parts = line.strip().split(',')
+                        if len(parts) > col_idx:
+                            val_str = parts[col_idx].strip()
+                            if val_str:
+                                try:
+                                    yesterday_close = float(val_str)
+                                except ValueError:
+                                    pass
             print(f"[{prefix}] yfinance failed. Fell back to local CSV for baseline: {yesterday_close}")
         except Exception as e:
             print(f"[{prefix}] CSV fallback also failed: {e}")

@@ -4,7 +4,6 @@ import json
 import subprocess
 import pandas as pd
 import numpy as np
-from scipy import stats
 import validate_data
 from futures_util import is_contract_roll_day
 

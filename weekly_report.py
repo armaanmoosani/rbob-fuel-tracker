@@ -1,5 +1,4 @@
 import os
-import sys
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
@@ -8,11 +7,9 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.image import MIMEImage
 from datetime import datetime
-import json
 import validate_data
 from scipy.stats import norm
 import pytz
-import re
 
 def mask_recipient(address):
     if not address:
@@ -111,14 +108,15 @@ def main():
 
     # Backfill PENDING outcomes
     updates_made = False
+    hist_date_to_idx = {date_str: idx for idx, date_str in enumerate(hist_df['date'])}
     for idx, row in log_df.iterrows():
         if str(row['actual_next_day_move_cents']) == 'PENDING':
             pred_date = row['timestamp'].split('T')[0]
             # Find pred_date in hist_df (= day T, when prediction was made)
-            hist_idx = hist_df.index[hist_df['date'] == pred_date].tolist()
-            if hist_idx and hist_idx[0] - 1 >= 0:
-                prev_idx = hist_idx[0] - 1
-                curr_row = hist_df.iloc[hist_idx[0]]   # rack[T] = tonight's new price
+            hist_idx = hist_date_to_idx.get(pred_date)
+            if hist_idx is not None and hist_idx - 1 >= 0:
+                prev_idx = hist_idx - 1
+                curr_row = hist_df.iloc[hist_idx]   # rack[T] = tonight's new price
                 prev_row = hist_df.iloc[prev_idx]       # rack[T-1] = last night's price
                 
                 rack_col = 'rack_u' if row['commodity'] == 'RB' else 'rack_d'
@@ -145,51 +143,30 @@ def main():
     df['timestamp_dt'] = pd.to_datetime(df['timestamp'], format='ISO8601')
     df = df.sort_values('timestamp_dt').copy()
 
-    # Pre-calculate active alert metrics
-    correct_hikes = 0
-    correct_drops = 0
-    false_flat = 0
-    false_wrong_dir = 0
-    missed_moves = 0
-    
-    savings_list = []
-    correct_list = []
-    
-    for idx, row in df.iterrows():
-        pred = row['predicted_direction']
-        actual = row['actual_move']
-        
-        saved = 0.0
-        is_correct = False
-        
-        if pred == 'HIKE':
-            saved = actual
-            if actual > 0:
-                correct_hikes += 1
-                is_correct = True
-            elif actual == 0:
-                false_flat += 1
-            else:
-                false_wrong_dir += 1
-        elif pred == 'DROP':
-            saved = -actual
-            if actual < 0:
-                correct_drops += 1
-                is_correct = True
-            elif actual == 0:
-                false_flat += 1
-            else:
-                false_wrong_dir += 1
-        else: # FLAT
-            if abs(actual) > 0:
-                missed_moves += 1
-                
-        savings_list.append(saved)
-        correct_list.append(is_correct)
-        
-    df['savings_cents'] = savings_list
-    df['is_correct'] = correct_list
+    # Vectorized calculation of savings and correctness
+    pred = df['predicted_direction']
+    actual = df['actual_move']
+
+    df['savings_cents'] = np.select(
+        [pred == 'HIKE', pred == 'DROP'],
+        [actual, -actual],
+        default=0.0
+    )
+
+    df['is_correct'] = np.select(
+        [pred == 'HIKE', pred == 'DROP'],
+        [actual > 0, actual < 0],
+        default=False
+    )
+
     df['cumulative_savings'] = df['savings_cents'].cumsum()
+
+    # Pre-calculate active alert metrics using direct sum filters
+    correct_hikes = int(((pred == 'HIKE') & (actual > 0)).sum())
+    correct_drops = int(((pred == 'DROP') & (actual < 0)).sum())
+    false_flat = int((((pred == 'HIKE') | (pred == 'DROP')) & (actual == 0)).sum())
+    false_wrong_dir = int(((pred == 'HIKE') & (actual < 0)).sum() + ((pred == 'DROP') & (actual > 0)).sum())
+    missed_moves = int(((pred == 'FLAT') & (actual.abs() > 0)).sum())
     
     # Correct total active alerts count (only HIKE and DROP signals)
     df_alerts = df[df['predicted_direction'].isin(['HIKE', 'DROP'])].copy()
