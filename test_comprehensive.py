@@ -492,20 +492,26 @@ class TestCategory10HistoricalReplay(unittest.TestCase):
         # Copy real files to temp dir
         shutil.copy(os.path.join(self.real_data_dir, "graves_history.csv"), self.temp_dir)
         shutil.copy(os.path.join(self.real_data_dir, "config.json"), self.temp_dir)
+        cache_src = os.path.join(self.real_data_dir, "metrics_cache.json")
+        if os.path.exists(cache_src):
+            shutil.copy(cache_src, self.temp_dir)
         
         # Patch paths
         self.orig_data_dir = backtest.DATA_DIR
         self.orig_csv_path = backtest.CSV_PATH
         self.orig_config_path = backtest.CONFIG_PATH
+        self.orig_metrics_cache_path = backtest.METRICS_CACHE_PATH
         
         backtest.DATA_DIR = self.temp_dir
         backtest.CSV_PATH = os.path.join(self.temp_dir, "graves_history.csv")
         backtest.CONFIG_PATH = os.path.join(self.temp_dir, "config.json")
+        backtest.METRICS_CACHE_PATH = os.path.join(self.temp_dir, "metrics_cache.json")
 
     def tearDown(self):
         backtest.DATA_DIR = self.orig_data_dir
         backtest.CSV_PATH = self.orig_csv_path
         backtest.CONFIG_PATH = self.orig_config_path
+        backtest.METRICS_CACHE_PATH = self.orig_metrics_cache_path
         shutil.rmtree(self.temp_dir)
 
     def test_10_1_real_database_length(self):
@@ -1069,7 +1075,7 @@ class TestCategory13LiveValidationAndRobustness(unittest.TestCase):
         long_body = "E10 - UNLEADED " + ("x" * 65) + " $2.10"
         self.assertIsNone(ingest_prices.extract_price_near_label(long_body, "E10 - UNLEADED"))
 
-    @patch('imaplib.IMAP4_SSL')
+    @patch('ingest_prices.imaplib.IMAP4_SSL')
     def test_13_6_imap_retry_logic(self, mock_imap_ssl):
         from unittest.mock import call
         # Simulate IMAP connection failing twice then succeeding

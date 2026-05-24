@@ -196,11 +196,14 @@ def validate_graves_history(csv_path):
             sys.exit(1)
 
     # Sudden daily spikes/drops (> $1.00)
-    # NOTE: The threshold is $1.00 per gallon (which is equivalent to 100 cents/gal).
-    # NYMEX futures and rack prices can experience high volatility (e.g. moves up to $0.40/gal in a single day
-    # during extreme events like Gulf hurricanes or geopolitical shocks). A threshold of $1.00/gal provides
-    # an extremely safe margin to avoid false positives on legitimate major market events while effectively
-    # catching gross data entry errors (e.g. missing decimal points, mismatched columns, or duplicated entries).
+    # NOTE: The validation threshold of $1.00/gal (100 cents/gal) is set to catch gross data entry errors.
+    # It is mathematically safe relative to the baseline configuration parameters:
+    # 1. The daily calibration thresholds are clamped to a maximum of CLAMP_HIKE_MAX (3.0 cents/gal)
+    #    and CLAMP_DROP_MIN (-3.0 cents/gal).
+    # 2. Thus, even if a large legitimate daily move of e.g. 10-30 cents/gal passes this validator,
+    #    the training logic clamps its impact to 3.0 cents/gal, preventing threshold distortion.
+    # 3. This decoupled design ensures we don't trigger false validation rejections on real major
+    #    market moves while maintaining absolute statistical robustness during parameter tuning.
     for col in price_cols:
         col_clean = df[['date', col]].dropna().copy()
         if len(col_clean) > 1:
@@ -272,7 +275,7 @@ def validate_prediction_log(log_path):
 
 def validate_and_update_hashes(data_dir):
     hash_csv_path = os.path.join(data_dir, "integrity_hashes.csv")
-    files_to_track = ["graves_history.csv", "config.json", "prediction_log.csv"]
+    files_to_track = ["graves_history.csv", "config.json", "metrics_cache.json", "prediction_log.csv"]
     
     existing_records = []
     if os.path.exists(hash_csv_path):
@@ -330,13 +333,13 @@ def validate_and_update_hashes(data_dir):
             recorded_line_count = int(latest_record['line_count'])
             recorded_sha256 = latest_record['sha256']
             
-            if fname == "config.json":
-                # Verify config.json is valid JSON
+            if fname in ("config.json", "metrics_cache.json"):
+                # Verify JSON validity
                 try:
                     full_content = "\n".join(lines)
                     json.loads(full_content)
                 except Exception as e:
-                    print(f"Data validation failed: config.json is not valid JSON. Error: {e}")
+                    print(f"Data validation failed: {fname} is not valid JSON. Error: {e}")
                     sys.exit(1)
                 
                 computed_sha256 = hashlib.sha256(full_content.encode("utf-8")).hexdigest()
@@ -347,7 +350,7 @@ def validate_and_update_hashes(data_dir):
                         "line_count": actual_line_count,
                         "sha256": computed_sha256
                     })
-                    print(f"Integrity hash updated for config.json (hash: {computed_sha256[:8]}...)")
+                    print(f"Integrity hash updated for {fname} (hash: {computed_sha256[:8]}...)")
             else:
                 if actual_line_count < recorded_line_count:
                     print(f"Data validation failed: File '{fname}' has been truncated. "

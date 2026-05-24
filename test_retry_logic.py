@@ -66,7 +66,7 @@ class TestRetryAndTargetDateLogic(unittest.TestCase):
         mock_check.return_value = (None, None)
         
         m = mock_open(read_data="date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
-        with patch('ingest_prices.open', m):
+        with patch('ingest_prices.open', m), patch('ingest_prices.git_pull_rebase'), patch('ingest_prices.git_commit_push'):
             with patch('sys.exit', side_effect=SystemExit) as mock_exit:
                 with self.assertRaises(SystemExit):
                     ingest_prices.main()
@@ -91,7 +91,7 @@ class TestRetryAndTargetDateLogic(unittest.TestCase):
         mock_check.return_value = (None, None)
         
         m = mock_open(read_data="date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
-        with patch('ingest_prices.open', m):
+        with patch('ingest_prices.open', m), patch('ingest_prices.git_pull_rebase'), patch('ingest_prices.git_commit_push'):
             with patch('sys.exit', side_effect=SystemExit) as mock_exit:
                 with self.assertRaises(SystemExit):
                     ingest_prices.main()
@@ -120,7 +120,7 @@ class TestRetryAndTargetDateLogic(unittest.TestCase):
         # Set manual run env var
         with patch.dict(os.environ, {"GITHUB_EVENT_NAME": "workflow_dispatch"}):
             m = mock_open(read_data="date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
-            with patch('ingest_prices.open', m):
+            with patch('ingest_prices.open', m), patch('ingest_prices.git_pull_rebase'), patch('ingest_prices.git_commit_push'):
                 with patch('sys.exit', side_effect=SystemExit) as mock_exit:
                     with self.assertRaises(SystemExit):
                         ingest_prices.main()
@@ -145,7 +145,7 @@ class TestRetryAndTargetDateLogic(unittest.TestCase):
         
         # Mock CSV contents so Monday date is ALREADY in CSV
         m = mock_open(read_data="date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n2026-05-25,2.10,2.30,2.40,2.50,2.60\n")
-        with patch('ingest_prices.open', m):
+        with patch('ingest_prices.open', m), patch('ingest_prices.git_pull_rebase'), patch('ingest_prices.git_commit_push'):
             with patch('sys.exit', side_effect=SystemExit) as mock_exit:
                 with self.assertRaises(SystemExit):
                     ingest_prices.main()

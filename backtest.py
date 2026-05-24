@@ -6,10 +6,12 @@ import pandas as pd
 import numpy as np
 from scipy import stats
 import validate_data
+from futures_util import is_contract_roll_day
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 CSV_PATH = os.path.join(DATA_DIR, "graves_history.csv")
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
+METRICS_CACHE_PATH = os.path.join(DATA_DIR, "metrics_cache.json")
 
 def load_config():
     defaults = {
@@ -32,23 +34,40 @@ def load_config():
         "CLAMP_DROP_MIN": -3.0,
         "CLAMP_DROP_MAX": -0.3
     }
+    cfg = defaults.copy()
     if os.path.exists(CONFIG_PATH):
-        with open(CONFIG_PATH, "r") as f:
-            try:
-                cfg = json.load(f)
-                for k, v in defaults.items():
-                    if k not in cfg:
-                        cfg[k] = v
-                return cfg
-            except Exception:
-                pass
-    return defaults
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                user_cfg = json.load(f)
+                cfg.update(user_cfg)
+        except Exception:
+            pass
+            
+    # Overlay metrics_cache if it exists (Issue 1.1)
+    if os.path.exists(METRICS_CACHE_PATH):
+        try:
+            with open(METRICS_CACHE_PATH, "r") as f:
+                cache_cfg = json.load(f)
+                cfg.update(cache_cfg)
+        except Exception:
+            pass
+            
+    return cfg
 
-def save_config(cfg):
-    tmp_path = CONFIG_PATH + ".tmp"
+def save_metrics_cache(cfg):
+    output_keys = [
+        "ROLLING_WINDOW_DAYS",
+        "LAG_DAYS"
+    ]
+    for k in cfg.keys():
+        if k.startswith("RB_") or k.startswith("HO_"):
+            output_keys.append(k)
+    cache_data = {k: cfg[k] for k in output_keys if k in cfg}
+    
+    tmp_path = METRICS_CACHE_PATH + ".tmp"
     with open(tmp_path, "w") as f:
-        json.dump(cfg, f, indent=2)
-    os.replace(tmp_path, CONFIG_PATH)
+        json.dump(cache_data, f, indent=2)
+    os.replace(tmp_path, METRICS_CACHE_PATH)
 
 
 def clamp(val, min_val, max_val):
@@ -59,15 +78,15 @@ def git_commit_push(message):
         subprocess.run(["git", "--version"], capture_output=True, check=True)
         subprocess.run(["git", "config", "--global", "user.name", "github-actions[bot]"], check=True)
         subprocess.run(["git", "config", "--global", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
-        subprocess.run(["git", "add", "data/config.json"], check=True)
+        subprocess.run(["git", "add", "data/metrics_cache.json", "data/integrity_hashes.csv"], check=True)
         # Check if there are changes before committing
         status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True, check=True)
         if status.stdout.strip():
             subprocess.run(["git", "commit", "-m", message], check=True)
             subprocess.run(["git", "push"], check=True)
-            print("Successfully committed and pushed config changes.")
+            print("Successfully committed and pushed metrics changes.")
         else:
-            print("No config changes to commit.")
+            print("No metrics changes to commit.")
     except Exception as e:
         print(f"Git commit/push failed: {e}")
         raise e
@@ -118,7 +137,7 @@ def train_thresholds(delta_nymex, delta_rack, Hp, Dp, clamp_bounds=None):
 
     return hike_thresh, drop_thresh
 
-def simulate_walk_forward(df, nymex_col, rack_col, W, Hp, Dp, clamp_bounds=None):
+def simulate_walk_forward(df, nymex_col, rack_col, W, Hp, Dp, prefix, clamp_bounds=None):
     """
     Simulates walk-forward out-of-sample testing on 3 folds.
     Returns the median savings across all folds.
@@ -154,9 +173,13 @@ def simulate_walk_forward(df, nymex_col, rack_col, W, Hp, Dp, clamp_bounds=None)
 
         savings = 0.0
         for i in range(len(df_test)):
+            dt = df_test['date'].iloc[i]
             ch = test_nymex.iloc[i]
             act = test_rack.iloc[i]
             if pd.isna(ch) or pd.isna(act):
+                continue
+            # Exclude contract roll days from OOS savings (Issue 8.1)
+            if is_contract_roll_day(dt, prefix):
                 continue
             if ch >= hike_thresh:
                 savings += act
@@ -196,7 +219,7 @@ def run_optimization(df, nymex_col, rack_col, prefix, cfg):
     for W in windows:
         for Hp in hike_percentiles:
             for Dp in drop_percentiles:
-                med_sav = simulate_walk_forward(df, nymex_col, rack_col, W, Hp, Dp, clamp_bounds)
+                med_sav = simulate_walk_forward(df, nymex_col, rack_col, W, Hp, Dp, prefix, clamp_bounds)
                 if med_sav > best_median_savings:
                     best_median_savings = med_sav
                     best_params = (W, Hp, Dp)
@@ -232,9 +255,24 @@ def run_optimization(df, nymex_col, rack_col, prefix, cfg):
     slice_nymex = df_slice[nymex_col].diff() * 100
     slice_rack = df_slice[rack_col].diff() * 100
 
-    valid_mask = ~(slice_nymex.isna() | slice_rack.isna())
-    valid_nymex = slice_nymex[valid_mask]
-    valid_rack = slice_rack[valid_mask]
+    # Filter out roll and nan days
+    valid_rows = []
+    for i in range(len(df_slice)):
+        dt = df_slice['date'].iloc[i]
+        ch = slice_nymex.iloc[i]
+        act = slice_rack.iloc[i]
+        if pd.isna(ch) or pd.isna(act):
+            continue
+        if is_contract_roll_day(dt, prefix):
+            continue
+        valid_rows.append((ch, act))
+
+    if valid_rows:
+        valid_nymex = pd.Series([r[0] for r in valid_rows])
+        valid_rack = pd.Series([r[1] for r in valid_rows])
+    else:
+        valid_nymex = pd.Series(dtype='float64')
+        valid_rack = pd.Series(dtype='float64')
 
     # 1. NYMEX daily volatility (cents)
     nymex_std = float(valid_nymex.std()) if len(valid_nymex) > 1 else 1.0
@@ -276,22 +314,31 @@ def run_optimization(df, nymex_col, rack_col, prefix, cfg):
         "low": {"alerts": 0, "correct": 0, "savings": []}
     }
     
-    # Starting points for sequential out-of-sample smoothing
-    curr_smoothed_h = old_hike
-    curr_smoothed_d = old_drop
+    # Starting points for sequential out-of-sample smoothing (Issue 4.1)
+    curr_smoothed_h = None
+    curr_smoothed_d = None
     
     for i in range(opt_W, len(df)):
         df_train = df.iloc[i - opt_W:i]
         df_today = df.iloc[i]
         
+        # Exclude contract roll days from OOS conviction scoring (Issue 8.1)
+        dt = df_today['date']
+        if is_contract_roll_day(dt, prefix):
+            continue
+            
         train_nymex, train_rack = get_clean_deltas(df_train, nymex_col, rack_col)
         if len(train_nymex) < 20:
             continue
         h_t, d_t = train_thresholds(train_nymex, train_rack, opt_Hp, opt_Dp, clamp_bounds)
         
         # Sequentially smooth the thresholds using the same Blend Alpha
-        curr_smoothed_h = round(alpha * h_t + (1 - alpha) * curr_smoothed_h, 2)
-        curr_smoothed_d = round(alpha * d_t + (1 - alpha) * curr_smoothed_d, 2)
+        if curr_smoothed_h is None:
+            curr_smoothed_h = h_t
+            curr_smoothed_d = d_t
+        else:
+            curr_smoothed_h = round(alpha * h_t + (1 - alpha) * curr_smoothed_h, 2)
+            curr_smoothed_d = round(alpha * d_t + (1 - alpha) * curr_smoothed_d, 2)
         
         nymex_std_t = float(train_nymex.std()) if len(train_nymex) > 1 else 1.0
         
@@ -380,7 +427,7 @@ def main():
     cfg["ROLLING_WINDOW_DAYS"] = rb_win
     cfg["LAG_DAYS"] = 0 # lag is physically zero
 
-    save_config(cfg)
+    save_metrics_cache(cfg)
 
     local_now = pd.Timestamp.now(tz='America/Chicago')
     commit_msg = f"Auto-tune [{local_now.strftime('%Y-%m-%d')}]: Walk-Forward. RB({msg_rb}) HO({msg_ho})"

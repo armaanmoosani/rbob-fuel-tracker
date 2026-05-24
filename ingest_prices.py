@@ -171,6 +171,7 @@ def check_inbox_for_prices(target_date_str):
         status, messages = mail.search(None, search_query)
         
         if status != "OK" or not messages[0]:
+            print(f"IMAP search returned no messages. Status: {status}, Query: {mask_sensitive_text(search_query)}")
             return None, None
 
         # Process the most recent email first
@@ -430,7 +431,8 @@ def main():
                 print("All retry attempts failed. Exiting.")
                 sys.exit(1)
             import time
-            time.sleep(5)
+            import random
+            time.sleep(2 ** attempt + random.uniform(0, 1))
     
     print("Triggering nightly backtester auto-tune...")
     try:

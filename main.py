@@ -110,6 +110,7 @@ MAX_SMS_CHARS = 1200
 # Load Config
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
 CONFIG_PATH = os.path.join(DATA_DIR, "config.json")
+METRICS_CACHE_PATH = os.path.join(DATA_DIR, "metrics_cache.json")
 CONFIG_CORRUPT = False
 try:
     with open(CONFIG_PATH, "r") as f:
@@ -132,6 +133,16 @@ except Exception as e:
         "HO_LEAN_DROP_CENTS": -0.5,
         "LAG_DAYS": 0
     }
+
+# Safe overlay of metrics_cache.json if it exists (Issue 1.1)
+if os.path.exists(METRICS_CACHE_PATH):
+    try:
+        with open(METRICS_CACHE_PATH, "r") as f:
+            metrics_cache = json.load(f)
+            APP_CONFIG.update(metrics_cache)
+        print("Successfully loaded and overlaid metrics_cache.json thresholds.")
+    except Exception as e:
+        print(f"Warning: Could not load metrics_cache.json, relying on config/defaults. ({e})")
 
 def get_session_start(dt):
     if dt.hour >= 17:
@@ -1303,6 +1314,9 @@ def send_daily_prompt(now):
         print(f"LOG_OUTBOUND_FAILURE: Failed to send daily prompt: {mask_sensitive_text(e)}")
 
 def main():
+    # Assert Chicago timezone is correctly recognized (Issue 10.1)
+    assert TZ.zone == 'America/Chicago', "TimeZone mismatch: America/Chicago expected."
+    
     start_time = datetime.now(timezone.utc)
     now = datetime.now(TZ)
     

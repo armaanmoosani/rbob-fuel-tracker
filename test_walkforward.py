@@ -43,7 +43,7 @@ def test_walk_forward_flow():
     
     # Temporarily set variables inside simulate_walk_forward to run on small parameters
     # Let's inspect simulate_walk_forward output on mock data
-    med_sav = backtest.simulate_walk_forward(df_large, "nymex_rb", "rack_u", W=100, Hp=15, Dp=85)
+    med_sav = backtest.simulate_walk_forward(df_large, "nymex_rb", "rack_u", W=100, Hp=15, Dp=85, prefix="RB")
     assert isinstance(med_sav, float)
     print(f"[PASSED] simulate_walk_forward (Median OOS Savings: {med_sav:+.2f}c)")
 

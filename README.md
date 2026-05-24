@@ -105,6 +105,7 @@ To deploy this securely to your own private repository:
    - `GMAIL_APP_PASSWORD`: The Google App Password for the sending account.
    - `TO_EMAIL`: The destination SMS gateway (e.g., `1234567890@vtext.com` for Verizon).
    - `PHONE_SMS_ADDRESS`: Optional comma-separated SMS gateway addresses (falls back to `TO_EMAIL` if empty).
+3. **Timezone Verification**: The pipeline relies on the America/Chicago timezone for trading hours and date boundaries. The codebase enforces Chicago time explicitly; if deployed locally or on custom runners, ensure that `pytz` can resolve `America/Chicago` correctly.
 
 ---
 
