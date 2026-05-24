@@ -105,7 +105,7 @@ COMMODITIES = {
 
 REQUEST_TIMEOUT = 20
 MAX_GH_VARIABLE_VALUE_BYTES = 48 * 1024
-MAX_SMS_CHARS = 1200
+MAX_SMS_CHARS = 153
 
 # Load Config
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -1064,6 +1064,11 @@ def build_html_email(subject, all_data, now, alert_context):
             if realized_savings_html:
                 html_lines.append(realized_savings_html)
 
+            instruction_text = signal.get("text", "").split(". ")[-1] if signal.get("text") else ""
+            if instruction_text:
+                html_lines.append(f'  <span style="font-size:11px;font-weight:700;color:{signal["color"]};">{instruction_text}</span><br>')
+
+
             if signal.get("z_score") is not None:
                 html_lines.append(
                     f'  <span style="display:inline-block;margin-top:2px;padding:1px 6px;background:#f1f5f9;border-radius:3px;font-size:10px;color:{conv_color};font-weight:700;">'
@@ -1189,117 +1194,108 @@ def build_html_email(subject, all_data, now, alert_context):
     return html, cids
 
 def send_sms(all_data, now, alert_context):
+    """Send a compact SMS that fits in a single 153-char carrier segment.
+
+    The Gmail-to-SMS gateway splits messages at the 153-char per-segment
+    boundary (standard UDH multipart SMS) and only the first segment is
+    reliably delivered. Every branch below must produce a body that is
+    at most MAX_SMS_CHARS characters so that both RB and HO data are
+    always visible in the same message the user receives.
+    """
     if not TO_PHONE_SMS:
         return
-        
+
     label    = alert_context.get('label', 'Update')
     time_str = now.strftime('%-I:%M %p CT')
 
-    if 'Swing' in label or 'Movement' in label:
-        alert_type = 'PRICE ALERT'
-    elif 'Rack' in label:
-        alert_type = 'RACK WINDOW'
-    elif 'Settlement' in label:
-        alert_type = 'SETTLEMENT'
-    else:
-        alert_type = 'UPDATE'
-
+    # --- HEARTBEAT / FAILURE: short fixed bodies ---
     if alert_context.get('label') == 'HEARTBEAT':
-        body = f"HEARTBEAT\n\nSystem heartbeat: Fuel Tracker is active and operational. SMS gateway is functional.\n\n{time_str}"
+        body = f"HEARTBEAT {time_str}: Fuel Tracker active."
     elif alert_context.get('label') == 'FAILURE':
-        action_desc = alert_context.get('action', 'Workflow execution failed! Check GHA logs.')
-        body = f"SYSTEM FAILURE ALERT\n\nWarning: Fuel Tracker encountered an error.\nDetails: {action_desc}\n\n{time_str}"
-    else:
-        lines = [f"[{time_str}] {alert_type}"]
-        lines.append("")
-        
-        if alert_context.get('label') == 'Final Verdict':
-            lines.append("FINAL VERDICT:")
-            rb = all_data.get('RB')
-            ho = all_data.get('HO')
-            
-            if rb and rb.get('rack_signal'):
-                signal = rb['rack_signal']
-                if signal.get('change_cents') is not None:
-                    lines.append(f"Gas: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
-                    sig_action = signal.get("action", "")
-                    if "BUY" in sig_action or "WAIT" in sig_action:
-                        if signal.get('conviction') == "Low Conviction":
-                            lines.append("  [Low Conviction — inventory check only, do not dispatch based on this signal alone]")
-                        else:
-                            if "BUY" in sig_action:
-                                lines.append("  [Demand same-day load before midnight]")
-                            else:
-                                lines.append("  [Confirm tank levels before waiting]")
-                    if signal.get('conviction'):
-                        lines.append(f"  Conviction: {signal['conviction']}")
-                    if signal.get('risk_text'):
-                        lines.append(f"  {signal['risk_text']}")
-                
-            if ho and ho.get('rack_signal'):
-                signal = ho['rack_signal']
-                if signal.get('change_cents') is not None:
-                    lines.append(f"Diesel: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
-                    sig_action = signal.get("action", "")
-                    if "BUY" in sig_action or "WAIT" in sig_action:
-                        if signal.get('conviction') == "Low Conviction":
-                            lines.append("  [Low Conviction — inventory check only, do not dispatch based on this signal alone]")
-                        else:
-                            if "BUY" in sig_action:
-                                lines.append("  [Demand same-day load before midnight]")
-                            else:
-                                lines.append("  [Confirm tank levels before waiting]")
-                    if signal.get('conviction'):
-                        lines.append(f"  Conviction: {signal['conviction']}")
-                    if signal.get('risk_text'):
-                        lines.append(f"  {signal['risk_text']}")
-                
-            lines.append("")
-        
-        for prefix in ['RB', 'HO']:
-            if prefix in all_data:
-                info = all_data[prefix]
-                cname = COMMODITIES[prefix]['display_name']
-                pct_sign  = '+' if info['daily_pct'] >= 0 else ''
-                
-                lines.append(f"{cname}")
-                baseline_price = info.get('yesterday_close') or info['open_price']
-                dollar_chg = info['current_price'] - baseline_price
-                dollar_str = f"+${dollar_chg:.4f}" if dollar_chg >= 0 else f"-${abs(dollar_chg):.4f}"
-                lines.append(f"Now: ${info['current_price']:.4f} ({pct_sign}{info['daily_pct']:.2f}% | {dollar_str})")
-                
-                if info['high_price'] > 0 and info['low_price'] > 0:
-                    lines.append(f"H: ${info['high_price']:.4f} | L: ${info['low_price']:.4f}")
-                    
-                sma3 = info.get('sma_3')
-                sma10 = info.get('sma_10')
-                if sma3 and sma10:
-                    if sma3 > sma10:
-                        lines.append("Mom: Bullish (Consider Buy)")
-                    else:
-                        lines.append("Mom: Bearish (Consider Wait)")
-                        
-                lines.append("")
-                
-        if 'RB' in all_data and 'HO' in all_data and 'CL' in all_data:
-            rb = all_data['RB']
-            ho = all_data['HO']
-            cl = all_data['CL']
-            if rb['current_price'] and ho['current_price'] and cl['current_price']:
-                # 3:2:1 Crack Spread per barrel: (2 * RB * 42 + 1 * HO * 42 - 3 * CL) / 3 = 28 * RB + 14 * HO - CL
-                crack = (rb['current_price'] * 28) + (ho['current_price'] * 14) - cl['current_price']
-                lines.append(f"CRACK SPREAD: ${crack:.2f}/bbl")
-                if rb['yesterday_close'] and ho['yesterday_close'] and cl['yesterday_close']:
-                    # 3:2:1 Crack Spread per barrel: (2 * RB * 42 + 1 * HO * 42 - 3 * CL) / 3 = 28 * RB + 14 * HO - CL
-                    yest_crack = (rb['yesterday_close'] * 28) + (ho['yesterday_close'] * 14) - cl['yesterday_close']
-                    crack_chg = crack - yest_crack
-                    sign = '+' if crack_chg >= 0 else ''
-                    trend = "Widening refinery margin" if crack_chg >= 0 else "Shrinking refinery margin"
-                    lines[-1] = f"CRACK SPREAD: ${crack:.2f} ({sign}${crack_chg:.2f})"
-                    lines.append(f"Trend: {trend}")
+        action_desc = alert_context.get('action', 'Workflow failed. Check GHA logs.')
+        body = f"FAILURE {time_str}: {action_desc}"[:MAX_SMS_CHARS]
+
+    elif alert_context.get('label') == 'Final Verdict':
+        # Compact verdict: one line per commodity signal + one price line each.
+        # Format per signal:
+        #   Gas: BUY | High | +4.00c
+        #   Gas: BUY | LOW CONV — do not dispatch
+        lines = [f"[{time_str}] FINAL VERDICT"]
+        for prefix, short in [('RB', 'Gas'), ('HO', 'Diesel')]:
+            info = all_data.get(prefix)
+            if not info:
+                continue
+            sig = info.get('rack_signal')
+            if sig and sig.get('change_cents') is not None:
+                action = sig.get('action', '')
+                conv   = sig.get('conviction', '')
+                chg    = sig.get('change_cents', 0.0)
+                # Extract BUY / WAIT / NO EDGE keyword
+                if 'BUY' in action:
+                    kw = 'BUY'
+                elif 'WAIT' in action:
+                    kw = 'WAIT'
+                else:
+                    kw = sig.get('label', 'NO EDGE')
+                if conv == 'Low Conviction':
+                    lines.append(f"{short}: {kw} | LOW CONV — do not dispatch")
+                else:
+                    conv_short = conv.replace(' Conviction', '') if conv else ''
+                    lines.append(f"{short}: {kw} | {conv_short} | {chg:+.2f}c")
+        # Price summary — one compact line per commodity
+        for prefix, abbr in [('RB', 'RB'), ('HO', 'HO')]:
+            info = all_data.get(prefix)
+            if not info:
+                continue
+            pct      = info.get('daily_pct')
+            price    = info.get('current_price')
+            if price is None:
+                continue
+            if pct is not None:
+                pct_sign = '+' if pct >= 0 else ''
+                lines.append(f"{abbr}: ${price:.4f} ({pct_sign}{pct:.2f}%)")
+            else:
+                lines.append(f"{abbr}: ${price:.4f}")
         body = "\n".join(lines).strip()
-        if len(body) > MAX_SMS_CHARS:
-            body = body[:MAX_SMS_CHARS - 30].rstrip() + "\n... see email for full details"
+
+    else:
+        # PRICE ALERT, SETTLEMENT, RACK WINDOW, or generic UPDATE.
+        # Determine alert type label.
+        if 'Swing' in label or 'Movement' in label:
+            alert_type = 'PRICE ALERT'
+        elif 'Rack' in label:
+            alert_type = 'RACK WINDOW'
+        elif 'Settlement' in label:
+            alert_type = 'SETTLEMENT'
+        else:
+            alert_type = 'UPDATE'
+
+        lines = [f"[{time_str}] {alert_type}"]
+        # One compact line per commodity: RB: $3.3351 (-3.44% | -$0.1188)
+        for prefix, abbr in [('RB', 'RB'), ('HO', 'HO')]:
+            info = all_data.get(prefix)
+            if not info:
+                continue
+            price = info.get('current_price')
+            pct   = info.get('daily_pct')
+            if price is None:
+                continue
+            baseline = info.get('yesterday_close') or info.get('open_price')
+            if pct is not None and baseline is not None:
+                pct_sign  = '+' if pct >= 0 else ''
+                dollar_chg = price - baseline
+                sign       = '+' if dollar_chg >= 0 else '-'
+                lines.append(f"{abbr}: ${price:.4f} ({pct_sign}{pct:.2f}% | {sign}${abs(dollar_chg):.4f})")
+            elif pct is not None:
+                pct_sign = '+' if pct >= 0 else ''
+                lines.append(f"{abbr}: ${price:.4f} ({pct_sign}{pct:.2f}%)")
+            else:
+                lines.append(f"{abbr}: ${price:.4f}")
+        body = "\n".join(lines).strip()
+
+    # Hard guardrail: truncate to one carrier segment.
+    if len(body) > MAX_SMS_CHARS:
+        body = body[:MAX_SMS_CHARS].rstrip()
 
     try:
         sms_msg = MIMEText(body)

@@ -1950,7 +1950,7 @@ class TestCategory18OperationalPricingRules(unittest.TestCase):
         import weekly_report
         cfg = weekly_report.load_config()
         self.assertIn("DISPATCH_SAME_DAY_RATE", cfg)
-        self.assertEqual(cfg["DISPATCH_SAME_DAY_RATE"], 0.50)
+        self.assertAlmostEqual(cfg["DISPATCH_SAME_DAY_RATE"], 0.50, places=4)
         
     def test_18_2_build_html_email_warnings_and_savings(self):
         import main
@@ -2018,7 +2018,8 @@ class TestCategory18OperationalPricingRules(unittest.TestCase):
                 'rack_signal': {
                     'action': 'BUY_NOW',
                     'label': 'Hike likely',
-                    'change_cents': 10.0
+                    'change_cents': 10.0,
+                    'conviction': 'High Conviction'
                 }
             }
         }
@@ -2038,8 +2039,16 @@ class TestCategory18OperationalPricingRules(unittest.TestCase):
                 import email
                 msg = email.message_from_string(msg_body)
                 payload = msg.get_payload(decode=True).decode('utf-8')
-                self.assertIn("[Demand same-day load before midnight]", payload)
-                self.assertNotIn("⚠️", payload)
+                # New compact format: "Gas: BUY | High | +10.00c"
+                self.assertIn("Gas: BUY", payload)
+                self.assertIn("+10.00c", payload)
+                # Verbose dispatch instructions are email-only; must NOT appear in SMS
+                self.assertNotIn("Demand same-day load before midnight", payload)
+                self.assertNotIn("Confirm tank levels before waiting", payload)
+                # No emojis
+                self.assertNotIn("\u26a0\ufe0f", payload)
+                # Must fit in one carrier segment
+                self.assertLessEqual(len(payload), main.MAX_SMS_CHARS)
 
     @patch('main.get_repo_variable', return_value=None)
     def test_18_4_low_conviction_recommendation_text(self, mock_get_var):
@@ -2106,8 +2115,163 @@ class TestCategory18OperationalPricingRules(unittest.TestCase):
                 import email
                 msg = email.message_from_string(msg_body)
                 payload = msg.get_payload(decode=True).decode('utf-8')
-                self.assertIn("[Low Conviction — inventory check only, do not dispatch based on this signal alone]", payload)
+                # New compact Low Conviction format: "Gas: BUY | LOW CONV — do not dispatch"
+                self.assertIn("Gas: BUY | LOW CONV", payload)
+                self.assertIn("do not dispatch", payload)
+                # Old verbose instruction must NOT appear in SMS (email only)
+                self.assertNotIn("inventory check only, do not dispatch based on this signal alone", payload)
+                # No emojis
+                self.assertNotIn("\u26a0\ufe0f", payload)
+                # Must fit in one carrier segment
+                self.assertLessEqual(len(payload), main.MAX_SMS_CHARS)
+
+
+
+class TestCategory19EndToEndTuesdaySimulation(unittest.TestCase):
+    """Category 19: End-to-End Tuesday Simulation for BUY alerts under different convictions"""
+    
+    @patch('main.get_repo_variable', return_value=None)
+    def test_19_1_tuesday_low_conviction_simulation(self, mock_get_var):
+        import main
+        import pytz
+        from datetime import datetime
+        from unittest.mock import patch
+        
+        # Simulating Tuesday afternoon at 2:35 PM CT
+        tz_chicago = pytz.timezone('America/Chicago')
+        now = datetime(2026, 5, 26, 14, 35, 0, tzinfo=tz_chicago)
+        
+        # Synthetic data with +4.0 move
+        # nymex_daily_std is 8.9551, so Z-score = 4.0 / 8.9551 = 0.45 (< 1.0 -> Low Conviction)
+        rb_data = {
+            'current_price': 2.04,
+            'open_price': 2.00,
+            'high_price': 2.08,
+            'low_price': 1.99,
+            'daily_pct': 2.0,
+            'yesterday_close': 2.00,
+            'five_day_high': 2.10,
+            'five_day_low': 1.95,
+            'thirty_day_avg': 2.00,
+            'chart_intraday_b64': 'mock_intra',
+            'chart_5d_b64': 'mock_5d',
+            'schwab_symbol': 'test_symbol'
+        }
+        
+        # 1. Generate signal
+        signal = main.build_rack_signal('RB', rb_data, now)
+        self.assertEqual(signal['action'], 'BUY_NOW')
+        self.assertEqual(signal['conviction'], 'Low Conviction')
+        self.assertAlmostEqual(signal['change_cents'], 4.0, places=4)
+        self.assertEqual(
+            signal['text'].split(". ")[-1],
+            'Low Conviction — do not act on this signal unless inventory forces you to order regardless.'
+        )
+        
+        # 2. Verify HTML verdict email
+        all_data = {'RB': rb_data}
+        rb_data['rack_signal'] = signal
+        
+        alert_context = {'label': 'Final Verdict'}
+        html_body, cids = main.build_html_email("Final Verdict: Exxon Price Predictor", all_data, now, alert_context)
+        
+        self.assertNotIn("⚠️", html_body)
+        self.assertIn("UNLEADED HIKE LIKELY:", html_body)
+        self.assertIn("Est. Realized Savings: +2.00¢/gal (at 50% same-day dispatch rate)", html_body)
+        self.assertIn("Low Conviction — do not act on this signal unless inventory forces you to order regardless.", html_body)
+        self.assertIn("Operational Checklist & Dispatch Rules", html_body)
+        
+        # 3. Verify SMS body
+        with patch('main.TO_PHONE_SMS', ['1234567890@vtext.com']), \
+             patch('main.smtplib.SMTP') as mock_smtp:
+            instance = mock_smtp.return_value
+            main.send_sms(all_data, now, alert_context)
+            
+            if instance.sendmail.called:
+                call_args = instance.sendmail.call_args[0]
+                msg_body = call_args[2]
+                import email
+                msg = email.message_from_string(msg_body)
+                payload = msg.get_payload(decode=True).decode('utf-8')
+                # New compact Low Conviction format: "Gas: BUY | LOW CONV — do not dispatch"
+                self.assertIn("Gas: BUY | LOW CONV", payload)
+                self.assertIn("do not dispatch", payload)
+                # Old verbose instruction must NOT appear in SMS (email only)
+                self.assertNotIn("inventory check only, do not dispatch based on this signal alone", payload)
                 self.assertNotIn("⚠️", payload)
+                # Must fit in one carrier segment
+                self.assertLessEqual(len(payload), main.MAX_SMS_CHARS)
+
+    @patch('main.get_repo_variable', return_value=None)
+    def test_19_2_tuesday_high_conviction_simulation(self, mock_get_var):
+        import main
+        import pytz
+        from datetime import datetime
+        from unittest.mock import patch
+        
+        # Simulating Tuesday afternoon at 2:35 PM CT
+        tz_chicago = pytz.timezone('America/Chicago')
+        now = datetime(2026, 5, 26, 14, 35, 0, tzinfo=tz_chicago)
+        
+        # Synthetic data with +14.0 move
+        # nymex_daily_std is 8.9551, so Z-score = 14.0 / 8.9551 = 1.56 (>= 1.5 -> High Conviction)
+        rb_data = {
+            'current_price': 2.14,
+            'open_price': 2.00,
+            'high_price': 2.18,
+            'low_price': 1.99,
+            'daily_pct': 7.0,
+            'yesterday_close': 2.00,
+            'five_day_high': 2.20,
+            'five_day_low': 1.95,
+            'thirty_day_avg': 2.00,
+            'chart_intraday_b64': 'mock_intra',
+            'chart_5d_b64': 'mock_5d',
+            'schwab_symbol': 'test_symbol'
+        }
+        
+        # 1. Generate signal
+        signal = main.build_rack_signal('RB', rb_data, now)
+        self.assertEqual(signal['action'], 'BUY_NOW')
+        self.assertEqual(signal['conviction'], 'High Conviction')
+        self.assertAlmostEqual(signal['change_cents'], 14.0, places=4)
+        self.assertEqual(
+            signal['text'].split(". ")[-1],
+            'Dispatch before the rack deadline if you need inventory.'
+        )
+        
+        # 2. Verify HTML verdict email
+        all_data = {'RB': rb_data}
+        rb_data['rack_signal'] = signal
+        
+        alert_context = {'label': 'Final Verdict'}
+        html_body, cids = main.build_html_email("Final Verdict: Exxon Price Predictor", all_data, now, alert_context)
+        
+        self.assertNotIn("⚠️", html_body)
+        self.assertIn("UNLEADED HIKE LIKELY:", html_body)
+        self.assertIn("Est. Realized Savings: +7.00¢/gal (at 50% same-day dispatch rate)", html_body)
+        self.assertIn("Dispatch before the rack deadline if you need inventory.", html_body)
+        self.assertIn("Operational Checklist & Dispatch Rules", html_body)
+        
+        # 3. Verify SMS body
+        with patch('main.TO_PHONE_SMS', ['1234567890@vtext.com']), \
+             patch('main.smtplib.SMTP') as mock_smtp:
+            instance = mock_smtp.return_value
+            main.send_sms(all_data, now, alert_context)
+            
+            if instance.sendmail.called:
+                call_args = instance.sendmail.call_args[0]
+                msg_body = call_args[2]
+                import email
+                msg = email.message_from_string(msg_body)
+                payload = msg.get_payload(decode=True).decode('utf-8')
+                # New compact High Conviction format: "Gas: BUY | High | +14.00c"
+                self.assertIn("Gas: BUY | High | +14.00c", payload)
+                # Old verbose instruction must NOT appear in SMS (email only)
+                self.assertNotIn("Demand same-day load before midnight", payload)
+                self.assertNotIn("⚠️", payload)
+                # Must fit in one carrier segment
+                self.assertLessEqual(len(payload), main.MAX_SMS_CHARS)
 
 
 if __name__ == "__main__":
