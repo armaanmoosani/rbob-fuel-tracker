@@ -2035,8 +2035,78 @@ class TestCategory18OperationalPricingRules(unittest.TestCase):
             if instance.sendmail.called:
                 call_args = instance.sendmail.call_args[0]
                 msg_body = call_args[2]
-                self.assertIn("[Demand same-day load before midnight]", msg_body)
-                self.assertNotIn("⚠️", msg_body)
+                import email
+                msg = email.message_from_string(msg_body)
+                payload = msg.get_payload(decode=True).decode('utf-8')
+                self.assertIn("[Demand same-day load before midnight]", payload)
+                self.assertNotIn("⚠️", payload)
+
+    def test_18_4_low_conviction_recommendation_text(self):
+        import main
+        import pytz
+        from datetime import datetime
+        now = datetime(2026, 5, 22, 14, 35, 0, tzinfo=pytz.timezone('America/Chicago'))
+        
+        # change_cents = 2.0 (>= 1.99 threshold)
+        # Z-score = 2.0 / 8.9551 = 0.22 (< 1.0 -> Low Conviction)
+        data = {
+            'current_price': 2.02,
+            'open_price': 2.00,
+            'high_price': 2.05,
+            'low_price': 1.99,
+            'daily_pct': 1.0,
+            'yesterday_close': 2.00,
+            'five_day_high': 2.10,
+            'five_day_low': 1.95,
+            'thirty_day_avg': 2.00,
+            'chart_intraday_b64': None,
+            'chart_5d_b64': None,
+            'schwab_symbol': 'test_symbol'
+        }
+        
+        signal = main.build_rack_signal('RB', data, now)
+        self.assertEqual(signal['conviction'], 'Low Conviction')
+        self.assertIn('Low Conviction — do not act on this signal unless inventory forces you to order regardless.', signal['text'])
+
+    def test_18_5_low_conviction_sms_suffix(self):
+        import main
+        from unittest.mock import patch
+        from datetime import datetime
+        
+        all_data = {
+            'RB': {
+                'daily_pct': 2.0,
+                'current_price': 2.10,
+                'open_price': 2.00,
+                'high_price': 2.20,
+                'low_price': 1.95,
+                'yesterday_close': 2.00,
+                'rack_signal': {
+                    'action': 'BUY_NOW',
+                    'label': 'Hike likely',
+                    'change_cents': 10.0,
+                    'conviction': 'Low Conviction'
+                }
+            }
+        }
+        
+        alert_context = {
+            'label': 'Final Verdict'
+        }
+        
+        with patch('main.TO_PHONE_SMS', ['1234567890@vtext.com']), \
+             patch('main.smtplib.SMTP') as mock_smtp:
+            instance = mock_smtp.return_value
+            main.send_sms(all_data, datetime.now(), alert_context)
+            
+            if instance.sendmail.called:
+                call_args = instance.sendmail.call_args[0]
+                msg_body = call_args[2]
+                import email
+                msg = email.message_from_string(msg_body)
+                payload = msg.get_payload(decode=True).decode('utf-8')
+                self.assertIn("[Low Conviction — inventory check only, do not dispatch based on this signal alone]", payload)
+                self.assertNotIn("⚠️", payload)
 
 
 if __name__ == "__main__":

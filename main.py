@@ -523,6 +523,9 @@ def build_rack_signal(prefix, data, now):
         color = "#64748b"
         instruction = "Do not let this futures move alone drive the truck decision."
 
+    if conviction == "Low Conviction" and action in ["BUY_NOW", "WAIT", "LEAN_BUY", "LEAN_WAIT"]:
+        instruction = "Low Conviction — do not act on this signal unless inventory forces you to order regardless."
+
     # Build Z-score bin labels for conviction note
     if abs_z >= 1.5:
         bin_name = "high"
@@ -1215,18 +1218,19 @@ def send_sms(all_data, now, alert_context):
             rb = all_data.get('RB')
             ho = all_data.get('HO')
             
-            has_hike = False
-            has_wait = False
-            
             if rb and rb.get('rack_signal'):
                 signal = rb['rack_signal']
                 if signal.get('change_cents') is not None:
                     lines.append(f"Gas: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
                     sig_action = signal.get("action", "")
-                    if "BUY" in sig_action:
-                        has_hike = True
-                    elif "WAIT" in sig_action:
-                        has_wait = True
+                    if "BUY" in sig_action or "WAIT" in sig_action:
+                        if signal.get('conviction') == "Low Conviction":
+                            lines.append("  [Low Conviction — inventory check only, do not dispatch based on this signal alone]")
+                        else:
+                            if "BUY" in sig_action:
+                                lines.append("  [Demand same-day load before midnight]")
+                            else:
+                                lines.append("  [Confirm tank levels before waiting]")
                     if signal.get('conviction'):
                         lines.append(f"  Conviction: {signal['conviction']}")
                     if signal.get('risk_text'):
@@ -1237,19 +1241,18 @@ def send_sms(all_data, now, alert_context):
                 if signal.get('change_cents') is not None:
                     lines.append(f"Diesel: {signal['label']} ({signal['change_cents']:+.2f} c/gal)")
                     sig_action = signal.get("action", "")
-                    if "BUY" in sig_action:
-                        has_hike = True
-                    elif "WAIT" in sig_action:
-                        has_wait = True
+                    if "BUY" in sig_action or "WAIT" in sig_action:
+                        if signal.get('conviction') == "Low Conviction":
+                            lines.append("  [Low Conviction — inventory check only, do not dispatch based on this signal alone]")
+                        else:
+                            if "BUY" in sig_action:
+                                lines.append("  [Demand same-day load before midnight]")
+                            else:
+                                lines.append("  [Confirm tank levels before waiting]")
                     if signal.get('conviction'):
                         lines.append(f"  Conviction: {signal['conviction']}")
                     if signal.get('risk_text'):
                         lines.append(f"  {signal['risk_text']}")
-            
-            if has_hike:
-                lines.append("[Demand same-day load before midnight]")
-            if has_wait:
-                lines.append("[Confirm tank levels before waiting]")
                 
             lines.append("")
         
