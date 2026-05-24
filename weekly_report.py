@@ -62,7 +62,12 @@ def mann_kendall_test(x):
     for i in range(n - 1):
         for j in range(i + 1, n):
             s += np.sign(x[j] - x[i])
-    var_s = (n * (n - 1) * (2 * n + 5)) / 18.0
+    unique_x, counts = np.unique(x, return_counts=True)
+    tie_sum = 0
+    for t in counts:
+        if t > 1:
+            tie_sum += t * (t - 1) * (2 * t + 5)
+    var_s = (n * (n - 1) * (2 * n + 5) - tie_sum) / 18.0
     if s > 0:
         z = (s - 1) / np.sqrt(var_s)
     elif s < 0:

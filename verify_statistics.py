@@ -14,10 +14,29 @@ CSV_PATH = os.path.join(DATA_DIR, "graves_history.csv")
 
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
+def load_config():
+    cfg = {}
+    import json
+    config_path = os.path.join(DATA_DIR, "config.json")
+    if os.path.exists(config_path):
+        try:
+            with open(config_path, "r") as f:
+                cfg.update(json.load(f))
+        except Exception:
+            pass
+    metrics_path = os.path.join(DATA_DIR, "metrics_cache.json")
+    if os.path.exists(metrics_path):
+        try:
+            with open(metrics_path, "r") as f:
+                cfg.update(json.load(f))
+        except Exception:
+            pass
+    return cfg
+
 def clamp(val, min_val, max_val):
     return max(min_val, min(val, max_val))
 
-def tune_thresholds(df_train, nymex_col, rack_col):
+def tune_thresholds(df_train, nymex_col, rack_col, Hp=15, Dp=85):
     """
     Calibrate empirical hike/drop thresholds from training data.
     Uses backward rack diff (rack[T] - rack[T-1]) = tonight's new price vs last night's,
@@ -43,9 +62,9 @@ def tune_thresholds(df_train, nymex_col, rack_col):
     drop_thresh = -1.0
 
     if hike_mask.sum() >= 5:
-        hike_thresh = clamp(np.percentile(delta_nymex[hike_mask], 15), 0.3, 3.0)
+        hike_thresh = clamp(np.percentile(delta_nymex[hike_mask], Hp), 0.3, 3.0)
     if drop_mask.sum() >= 5:
-        drop_thresh = clamp(np.percentile(delta_nymex[drop_mask], 85), -3.0, -0.3)
+        drop_thresh = clamp(np.percentile(delta_nymex[drop_mask], Dp), -3.0, -0.3)
 
     return hike_thresh, drop_thresh, slope, r_value**2
 
@@ -125,7 +144,10 @@ def main():
         df_train = df_clean.iloc[:-holdout_days]
         df_test  = df_clean.iloc[-holdout_days:].reset_index(drop=True)
 
-        hike_t, drop_t, slope, r2 = tune_thresholds(df_train, 'nymex_rb', 'rack_u')
+        cfg_loaded = load_config()
+        opt_Hp = cfg_loaded.get('RB_opt_Hp', 15)
+        opt_Dp = cfg_loaded.get('RB_opt_Dp', 85)
+        hike_t, drop_t, slope, r2 = tune_thresholds(df_train, 'nymex_rb', 'rack_u', Hp=opt_Hp, Dp=opt_Dp)
         print(f"Tuned Thresholds on Train Data: Hike={hike_t:.2f}c, Drop={drop_t:.2f}c (Slope={slope:.2f}, R2={r2:.2f})")
 
         real_savings, real_precision, real_alerts, _ = run_simulation(

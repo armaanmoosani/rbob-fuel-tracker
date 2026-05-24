@@ -1102,10 +1102,12 @@ def build_html_email(subject, all_data, now, alert_context):
         ho = all_data['HO']
         cl = all_data['CL']
         if rb['current_price'] and ho['current_price'] and cl['current_price']:
+            # 3:2:1 Crack Spread per barrel: (2 * RB * 42 + 1 * HO * 42 - 3 * CL) / 3 = 28 * RB + 14 * HO - CL
             crack = (rb['current_price'] * 28) + (ho['current_price'] * 14) - cl['current_price']
             crack_str = f"${crack:.2f}"
             trend_str = ""
             if rb['yesterday_close'] and ho['yesterday_close'] and cl['yesterday_close']:
+                # 3:2:1 Crack Spread per barrel: (2 * RB * 42 + 1 * HO * 42 - 3 * CL) / 3 = 28 * RB + 14 * HO - CL
                 yest_crack = (rb['yesterday_close'] * 28) + (ho['yesterday_close'] * 14) - cl['yesterday_close']
                 crack_chg = crack - yest_crack
                 sign = '+' if crack_chg >= 0 else ''
@@ -1238,9 +1240,11 @@ def send_sms(all_data, now, alert_context):
             ho = all_data['HO']
             cl = all_data['CL']
             if rb['current_price'] and ho['current_price'] and cl['current_price']:
+                # 3:2:1 Crack Spread per barrel: (2 * RB * 42 + 1 * HO * 42 - 3 * CL) / 3 = 28 * RB + 14 * HO - CL
                 crack = (rb['current_price'] * 28) + (ho['current_price'] * 14) - cl['current_price']
                 lines.append(f"CRACK SPREAD: ${crack:.2f}/bbl")
                 if rb['yesterday_close'] and ho['yesterday_close'] and cl['yesterday_close']:
+                    # 3:2:1 Crack Spread per barrel: (2 * RB * 42 + 1 * HO * 42 - 3 * CL) / 3 = 28 * RB + 14 * HO - CL
                     yest_crack = (rb['yesterday_close'] * 28) + (ho['yesterday_close'] * 14) - cl['yesterday_close']
                     crack_chg = crack - yest_crack
                     sign = '+' if crack_chg >= 0 else ''
@@ -1507,6 +1511,9 @@ def main():
 def is_market_open(dt):
     def simple_globex_energy_hours(ts):
         local = ts.astimezone(TZ)
+        local_date = local.date()
+        if local_date in us_market_holidays(local_date.year):
+            return False
         local_time = local.time()
         weekday = local.weekday()
         if weekday == 5:
@@ -1654,12 +1661,13 @@ def fetch_commodity(prefix, cfg, now, access_token):
                     yesterday_close = None
                 elif yesterday_close is None:
                     yesterday_close = float(prev_daily['Close'].iloc[-1])
-            thirty_day_avg = float(h30d['Close'].mean())
-
-            if len(h30d) >= 3:
-                sma_3 = float(h30d['Close'].tail(3).mean())
-            if len(h30d) >= 10:
-                sma_10 = float(h30d['Close'].tail(10).mean())
+                
+                # Calculate moving averages using strictly closed daily data (prev_daily) up to T-1
+                thirty_day_avg = float(prev_daily['Close'].mean())
+                if len(prev_daily) >= 3:
+                    sma_3 = float(prev_daily['Close'].tail(3).mean())
+                if len(prev_daily) >= 10:
+                    sma_10 = float(prev_daily['Close'].tail(10).mean())
     except Exception:
         pass
 

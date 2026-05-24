@@ -397,6 +397,8 @@ def run_optimization(df, nymex_col, rack_col, prefix, cfg):
     cfg[f"{prefix}_historical_cvar"] = round(cvar_val, 4)
     cfg[f"{prefix}_average_savings"] = round(avg_savings, 4)
     cfg[f"{prefix}_window_days"] = opt_W
+    cfg[f"{prefix}_opt_Hp"] = opt_Hp
+    cfg[f"{prefix}_opt_Dp"] = opt_Dp
 
     msg = f"Hike={smoothed_hike}c, Drop={smoothed_drop}c, Vol={nymex_std:.2f}c, CVaR={cvar_val:.2f}c"
     return cfg, msg, opt_W

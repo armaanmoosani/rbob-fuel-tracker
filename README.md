@@ -48,12 +48,12 @@ Consequently, the engine's correct alerts capture large moves, while incorrect a
 ## Core Features
 
 - **Hourly Ingestion Retries (`ingest_prices.py`)**: Nightly connects via IMAP to read the official supplier invoice. It queries hourly from 8:00 PM to 12:00 AM CT with exponential backoff to prevent false missing-email alarms, handles target date calculations across the midnight boundary, and appends parsed rack prices to an immutable CSV history.
-- **Walk-Forward Calibration (`backtest.py`)**: Re-engineers threshold calibration using a robust 3-fold Walk-Forward Validation strategy over the last 365 days of history (90-day out-of-sample test windows). Parameters ($W, Hp, Dp$) are chosen to maximize **median out-of-sample savings** to prevent backtest overfitting.
+- **Walk-Forward Calibration (`backtest.py`)**: Re-engineers threshold calibration using a robust 3-fold Walk-Forward Validation strategy over the last 365 days of history (90-day out-of-sample test windows). The parameter grid search sweeps training windows $W \in \{120, 180, 240\}$, hike percentiles $Hp \in \{15, 20\}$, and drop percentiles $Dp \in \{80, 85\}$ to maximize **median out-of-sample savings** to prevent backtest overfitting. Statically configured clamping bounds (e.g., `CLAMP_HIKE_MIN: 0.3`, `CLAMP_HIKE_MAX: 3.0` cents, and `CLAMP_DROP_MIN: -3.0`, `CLAMP_DROP_MAX: -0.3` cents) act as emergency guardrails, overriding the percentiles if market volatility collapses or explodes.
 - **Contract Roll Day Exclusions**: Excludes anomalous futures price data surrounding CME contract roll days (the 25th of the month, or nearest business day) from both calibration and active trading to prevent false signaling during mechanical liquidity shifts.
 - **Dynamic Volatility & Z-Score Conviction**: Evaluates the strength of futures moves using the rolling standard deviation of daily changes ($\sigma$). It translates daily changes into Z-scores to grade alerts by conviction: **High Conviction** ($|Z| \ge 1.5$), **Moderate Conviction** ($1.0 \le |Z| < 1.5$), or **Low Conviction** ($|Z| < 1.0$). Z-score thresholds are smoothed for historical reproducibility.
 - **Quantified Deferral Risk (CVaR)**: Computes the 95% Conditional Value-at-Risk (worst-case tail risk) over the optimal window. For "WAIT" alerts, it computes the expected price spike cost:
   *e.g., "Risk Note: On the worst 5% of days historically, rack prices spiked +4.20¢/gal (+$357 per 8,500 gal truck)."*
-- **Real-Time SMS & Email Alerts**: Polls the Schwab API and Yahoo Finance API (`RB=F`, `HO=F`, `CL=F`) during CME trading hours. At 2:35 PM CT (post-NYMEX settlement), it sends structured, high-value alerts containing the verdict, Z-score conviction, and tail-risk warnings.
+- **Real-Time SMS & Email Alerts**: Polls the Schwab API and Yahoo Finance API (`RB=F`, `HO=F`, `CL=F`) during CME trading hours. At 2:35 PM CT (post-NYMEX settlement), it sends structured, high-value alerts containing the verdict, Z-score conviction, and tail-risk warnings. It also displays a standard **3:2:1 Crack Spread** priced per barrel of crude: `(2 * RB * 42 + 1 * HO * 42 - 3 * CL) / 3 = 28 * RB + 14 * HO - CL`.
 - **Overnight Verification Loop**: Automatically backfills prediction outcomes by comparing them to the next trading day's physical rack price, appending results to `prediction_log.csv` and displaying the confirmation table in morning notifications.
 - **Outlook-Safe Weekly Dashboard (`weekly_report.py`)**: Runs every Saturday morning. It calculates cumulative savings, runs a stable 180-day permutation significance test, and formats the dashboard using nested HTML tables for rendering safety.
 - **Blockchain-Style Data Validation (`validate_data.py`)**: Protects the database against corruption and manual edits using an append-only registry of SHA-256 hashes (`data/integrity_hashes.csv`), enforcing strict immutability.
@@ -103,6 +103,14 @@ The repository contains a highly thorough, multi-tiered testing framework:
    - Audits model significance against randomized null models (permutation test), evaluates out-of-sample holdout datasets, computes yearly regime shifts, analyzes residual diagnostics, and measures model performance against shadow baselines.
 4. **Empirical Audits & Stress Testing (`scratch/`)**:
    - A suite of specialized tools (`conviction_regime_audit.py`, `weekday_performance_audit.py`, `run_simulations.py`, etc.) for identifying boundary conditions, decay curves, weekday characteristics, and risk structures.
+
+---
+
+## Operational Constraints & Safeguards
+
+To maintain pipeline stability and catch gross external data entry errors, the system enforces the following constraints:
+1. **$1.00 Daily Price Jump Safeguard**: In `validate_data.py`, physical and settlement price inputs are rejected if they jump by more than $1.00/gal (100 cents/gal) in a single daily transition. In the event of a genuine black swan market shift exceeding this limit, the pipeline will halt as a safety check, requiring administrative override or verification.
+2. **$1.00 to $10.00 Price Boundaries**: Absolute price inputs are validated to reside strictly within a [$1.00, $10.00] range.
 
 ---
 

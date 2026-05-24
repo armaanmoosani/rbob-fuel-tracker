@@ -1,6 +1,8 @@
 import os
 import sys
 import json
+import csv
+import math
 import imaplib
 import email
 import email.utils
@@ -410,8 +412,28 @@ def main():
             sys.exit(0)
             
         # Write to CSV
-        with open(CSV_PATH, "a") as f:
-            f.write(f"{date_str},{rb_stl},{ho_stl},{prices[0]:.4f},{prices[1]:.4f},{prices[2]:.4f}\n")
+        with open(CSV_PATH, "a", newline="") as f:
+            writer = csv.writer(f)
+            
+            def fmt_val(v):
+                if v is None or v == "":
+                    return ""
+                try:
+                    fv = float(v)
+                    if math.isnan(fv) or math.isinf(fv):
+                        return ""
+                    return f"{fv:.4f}"
+                except (ValueError, TypeError):
+                    return str(v)
+            
+            writer.writerow([
+                date_str,
+                fmt_val(rb_stl),
+                fmt_val(ho_stl),
+                f"{prices[0]:.4f}",
+                f"{prices[1]:.4f}",
+                f"{prices[2]:.4f}"
+            ])
             
         try:
             validate_data.validate_all(DATA_DIR)
