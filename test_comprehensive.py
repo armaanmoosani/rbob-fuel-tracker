@@ -1691,8 +1691,10 @@ class TestCategory15PredictionLog(unittest.TestCase):
         shutil.rmtree(self.temp_dir)
 
     @patch('main.DATA_DIR')
+    @patch('main.get_repo_variable', return_value=None)
+    @patch('main.set_repo_variable', return_value=None)
     @patch('main.APP_CONFIG', {"LAG_DAYS": 0, "ROLLING_WINDOW_DAYS": 120, "RB_HIKE_THRESHOLD_CENTS": 1.0, "RB_nymex_daily_std": 1.0})
-    def test_15_1_prediction_log_idempotency(self, mock_data_dir):
+    def test_15_1_prediction_log_idempotency(self, mock_set_var, mock_get_var, mock_data_dir):
         mock_data_dir.__get__ = MagicMock(return_value=self.temp_dir)
         with patch('main.DATA_DIR', self.temp_dir):
             data = {
