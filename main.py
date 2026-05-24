@@ -1527,7 +1527,18 @@ def main():
 
     local_now = now.astimezone(TZ)
     
-    if local_now.hour == 14 and local_now.minute >= 35:
+    force_verdict = os.environ.get('FORCE_VERDICT', 'false').lower() == 'true'
+    
+    if force_verdict:
+        attach_rack_signals(all_data, now)
+        alert_ctx = {
+            'label': 'Final Verdict',
+            'action': 'ON-DEMAND MANUAL OVERRIDE: Comparing the current NYMEX price to the prior settlement to estimate rack direction.',
+            'action_color': '#8b5cf6'
+        }
+        send_email("Final Verdict (On Demand): Exxon Price Predictor", all_data, now, alert_ctx)
+        send_sms(all_data, now, alert_ctx)
+    elif local_now.hour == 14 and local_now.minute >= 35:
         attach_rack_signals(all_data, now)
         send_once_today('VERDICT_1435', "Final Verdict: Exxon Price Predictor", all_data, now, {
             'label': 'Final Verdict',
