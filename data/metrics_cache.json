@@ -36,5 +36,9 @@
   "HO_mod_z_count": 65,
   "HO_low_z_win_rate": 0.7527,
   "HO_low_z_savings": 1.6991,
-  "HO_low_z_count": 186
+  "HO_low_z_count": 186,
+  "RB_opt_Hp": 15,
+  "RB_opt_Dp": 85,
+  "HO_opt_Hp": 15,
+  "HO_opt_Dp": 85
 }
