@@ -1595,11 +1595,77 @@ def is_market_open(dt):
         print(f"Calendar check failed: {e}. Using simple Globex-hours fallback: open={fallback_open}.")
         return fallback_open
 
+def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
+    def quote_float(quote, *keys):
+        for key in keys:
+            value = quote.get(key)
+            if value not in (None, ''):
+                try:
+                    value = float(value)
+                    if value > 0:
+                        return value
+                except (TypeError, ValueError):
+                    pass
+        return None
+
+    def quote_activity(quote):
+        return quote_float(quote, 'volume', 'volumeDay', 'totalVolume', 'openInterest') or 0.0
+
+    schedule_year, schedule_month, _ = get_front_month_contract(now, prefix)
+    candidates = []
+    for i in range(candidate_months):
+        cyear, cmonth = add_month(schedule_year, schedule_month, i)
+        candidates.append(f"/{prefix}{DELIVERY_MONTH_CODES[cmonth]}{cyear % 100:02d}")
+
+    if not access_token:
+        return candidates[0]
+
+    try:
+        symbols = ",".join(candidates)
+        res = requests.get(
+            "https://api.schwabapi.com/marketdata/v1/quotes",
+            params={"symbols": symbols},
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15
+        )
+        res.raise_for_status()
+        res_json = res.json()
+
+        best_symbol = None
+        best_score = (-1, -1.0, -1)
+        for idx, symbol in enumerate(candidates):
+            quote_entry = None
+            if symbol in res_json:
+                quote_entry = res_json[symbol].get('quote', {})
+            elif isinstance(res_json, dict):
+                quote_entry = next(
+                    (item.get('quote') for item in res_json.values() if isinstance(item, dict) and item.get('quote', {}).get('symbol') == symbol),
+                    None
+                )
+            if not quote_entry:
+                continue
+            current_price = quote_float(quote_entry, 'lastPrice', 'mark', 'bidPrice', 'askPrice')
+            if current_price is None:
+                continue
+            score = float(quote_activity(quote_entry))
+            candidate_score = (1, score, idx)
+            if candidate_score > best_score:
+                best_score = candidate_score
+                best_symbol = symbol
+
+        if best_symbol:
+            print(f"[{prefix}] Resolved active Schwab symbol from live quotes: {best_symbol}")
+            return best_symbol
+    except Exception as exc:
+        print(f"[{prefix}] Active Schwab symbol resolution failed: {exc}. Falling back to calendar-based front-month.")
+
+    return candidates[0]
+
+
 def fetch_commodity(prefix, cfg, now, access_token):
-    contract_year, contract_month, ltd = get_front_month_contract(now, prefix)
-    schwab_symbol = f"/{prefix}{DELIVERY_MONTH_CODES[contract_month]}{contract_year % 100:02d}"
+    schwab_symbol = resolve_active_schwab_symbol(prefix, now, access_token)
     dynamic_yf_symbol = schwab_to_yfinance_symbol(schwab_symbol)
-    print(f"[{prefix}] Targeting front-month: Schwab {schwab_symbol} | yf {dynamic_yf_symbol} | LTD {ltd}")
+    print(f"[{prefix}] Targeting front-month: Schwab {schwab_symbol} | yf {dynamic_yf_symbol}")
     
     current_price = open_price = high_price = low_price = None
     data_source = None

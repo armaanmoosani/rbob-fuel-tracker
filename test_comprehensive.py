@@ -1317,6 +1317,65 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
         # yesterday_close should be overridden to None because cache was stale (last date 2026-05-20 < 2026-05-21) and CSV is empty
         self.assertIsNone(res['yesterday_close'])
 
+    @patch('main.requests.get')
+    def test_12_5a_active_schwab_symbol_resolution_prefers_high_volume(self, mock_get):
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            '/RBK26': {'quote': {'symbol': '/RBK26', 'lastPrice': 2.10, 'volume': 100}},
+            '/RBM26': {'quote': {'symbol': '/RBM26', 'lastPrice': 2.15, 'volume': 1000}},
+            '/RBN26': {'quote': {'symbol': '/RBN26', 'lastPrice': 2.20, 'volume': 10}},
+        }
+        mock_get.return_value = mock_response
+
+        resolved = main.resolve_active_schwab_symbol(
+            'RB',
+            datetime(2026, 5, 22, 12, 0, tzinfo=pytz.utc),
+            'dummy_token'
+        )
+
+        self.assertEqual(resolved, '/RBM26')
+
+    @patch('main.yf.Ticker')
+    @patch('main.requests.get')
+    @patch('main.resolve_active_schwab_symbol')
+    def test_12_5b_fetch_commodity_uses_active_schwab_primary(self, mock_resolve, mock_get, mock_ticker):
+        mock_resolve.return_value = '/RBM26'
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            '/RBM26': {
+                'quote': {
+                    'lastPrice': 2.20,
+                    'openPrice': 2.10,
+                    'highPrice': 2.25,
+                    'lowPrice': 2.00,
+                    'closePrice': 2.05
+                }
+            }
+        }
+        mock_get.return_value = mock_response
+
+        mock_history = MagicMock()
+        h5d = pd.DataFrame(
+            {'Close': [2.20], 'High': [2.25], 'Low': [2.00]},
+            index=[datetime(2026, 5, 21, tzinfo=pytz.utc)]
+        )
+        h30d = pd.DataFrame(
+            {'Close': [2.05]},
+            index=[datetime(2026, 5, 21, tzinfo=pytz.utc)]
+        )
+        mock_history.history.side_effect = [h5d, h30d]
+        mock_ticker.return_value = mock_history
+
+        cfg = {'name': 'Wholesale Gas', 'yf_symbol': 'RB=F'}
+        res = main.fetch_commodity('RB', cfg, datetime(2026, 5, 22, 12, 0, tzinfo=pytz.utc), 'token')
+
+        self.assertEqual(res['schwab_symbol'], '/RBM26')
+        self.assertEqual(res['current_price'], 2.20)
+        mock_resolve.assert_called_once_with('RB', datetime(2026, 5, 22, 12, 0, tzinfo=pytz.utc), 'token')
+
     @patch('smtplib.SMTP')
     def test_12_6_sms_gateway_silent_outbound_failure(self, mock_smtp):
         # Mock SMTP to raise exception on connection/login
