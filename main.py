@@ -1846,7 +1846,8 @@ def fetch_commodity(prefix, cfg, now, access_token):
         'sma_10': sma_10,
         'chart_intraday_b64': chart_intra,
         'chart_5d_b64': chart_5d,
-        'schwab_symbol': schwab_symbol
+        'schwab_symbol': schwab_symbol,
+        'yfinance_symbol': dynamic_yf_symbol
     }
 
 
