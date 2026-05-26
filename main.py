@@ -63,17 +63,36 @@ def mask_sensitive_text(text):
     if not text:
         return ""
     text = str(text)
+    
+    # Mask email/phone recipients
+    recipient_vars = ['GMAIL_USER', 'GRAVES_EMAIL', 'TO_EMAIL', 'PHONE_SMS_ADDRESS']
     sensitive_vals = []
-    for env_var in ['GMAIL_USER', 'GRAVES_EMAIL', 'TO_EMAIL', 'PHONE_SMS_ADDRESS']:
+    for env_var in recipient_vars:
         val = os.environ.get(env_var, '')
         if val:
             for item in val.split(','):
                 item_stripped = item.strip()
                 if item_stripped and len(item_stripped) > 2:
                     sensitive_vals.append(item_stripped)
+    
+    # Mask authentication tokens and secrets
+    token_vars = ['GH_PAT', 'SCHWAB_APP_KEY', 'SCHWAB_APP_SECRET', 'SCHWAB_REFRESH_TOKEN', 'GMAIL_APP_PASSWORD']
+    for env_var in token_vars:
+        val = os.environ.get(env_var, '')
+        if val and len(val) > 4:
+            sensitive_vals.append(val)
+    
     sensitive_vals = sorted(list(set(sensitive_vals)), key=len, reverse=True)
+    
     for val in sensitive_vals:
-        text = text.replace(val, mask_recipient(val))
+        if '@' in val:
+            # Email/phone masking
+            text = text.replace(val, mask_recipient(val))
+        else:
+            # Token/secret masking
+            if len(val) > 4:
+                masked = val[:2] + '***' + val[-2:]
+                text = text.replace(val, masked)
     return text
 
 GH_HEADERS = {

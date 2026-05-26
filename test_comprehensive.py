@@ -2333,6 +2333,94 @@ class TestCategory19EndToEndTuesdaySimulation(unittest.TestCase):
                 self.assertLessEqual(len(payload), main.MAX_SMS_CHARS)
 
 
+class TestCategory20SecretMasking(unittest.TestCase):
+    """Category 20: Security - Verify sensitive data is masked in logs"""
+
+    def test_20_1_mask_sensitive_text_token_masking(self):
+        """Verify that auth tokens and secrets are masked"""
+        with patch.dict(os.environ, {
+            'GH_PAT': 'ghp_test_token_12345678901234567890',
+            'SCHWAB_APP_KEY': 'app_key_test_12345678901234567890',
+            'SCHWAB_APP_SECRET': 'app_secret_test_12345678901234567890',
+            'GMAIL_APP_PASSWORD': 'gmail_password_test_12345678'
+        }):
+            test_text = "OAuth failed with token ghp_test_token_12345678901234567890"
+            masked = main.mask_sensitive_text(test_text)
+            # Token should be masked
+            self.assertNotIn('ghp_test_token_12345678901234567890', masked)
+            self.assertIn('gh***90', masked)
+
+    def test_20_2_mask_sensitive_text_email_masking(self):
+        """Verify that email addresses are masked"""
+        with patch.dict(os.environ, {
+            'GMAIL_USER': 'user@example.com',
+            'TO_EMAIL': 'recipient@example.com'
+        }):
+            test_text = "Email sent to recipient@example.com from user@example.com"
+            masked = main.mask_sensitive_text(test_text)
+            # Full email should not appear
+            self.assertNotIn('user@example.com', masked)
+            self.assertNotIn('recipient@example.com', masked)
+            # Check actual masking format (re***t@example.com, us***r@example.com)
+            self.assertIn('re***t@example.com', masked)
+            self.assertIn('us***r@example.com', masked)
+
+    def test_20_3_mask_sensitive_text_phone_masking(self):
+        """Verify that phone numbers are masked"""
+        with patch.dict(os.environ, {
+            'PHONE_SMS_ADDRESS': '+1234567890'
+        }):
+            test_text = "SMS sent to +1234567890"
+            masked = main.mask_sensitive_text(test_text)
+            # Full phone should not appear
+            self.assertNotIn('+1234567890', masked)
+            # Should have masked version
+            self.assertIn('***', masked)
+
+    def test_20_4_mask_recipient_email(self):
+        """Verify mask_recipient properly masks email addresses"""
+        result = main.mask_recipient('john.doe@example.com')
+        self.assertNotIn('john', result)
+        self.assertNotIn('doe', result)
+        # Masking format: first 2 chars + *** + last char (before @)
+        self.assertIn('jo***e', result)
+        self.assertIn('@example.com', result)
+
+    def test_20_5_mask_recipient_phone(self):
+        """Verify mask_recipient properly masks phone numbers"""
+        result = main.mask_recipient('+14155552671')
+        # Should not have full phone
+        self.assertNotIn('+14155552671', result)
+        # Should have masked version
+        self.assertIn('***', result)
+
+    def test_20_6_no_secrets_in_exception_logs(self):
+        """Verify that exception messages don't expose secrets"""
+        with patch.dict(os.environ, {
+            'GH_PAT': 'secret_gh_token_1234567890',
+            'GMAIL_APP_PASSWORD': 'secret_gmail_pass_1234567890'
+        }):
+            # Simulate an exception with a secret
+            exception_msg = "Failed to send email with password secret_gmail_pass_1234567890"
+            masked = main.mask_sensitive_text(exception_msg)
+            self.assertNotIn('secret_gmail_pass_1234567890', masked)
+            self.assertIn('se***90', masked)
+
+    def test_20_7_multiple_secrets_in_one_message(self):
+        """Verify multiple secrets in one message are all masked"""
+        with patch.dict(os.environ, {
+            'SCHWAB_APP_KEY': 'key_12345678901234567890',
+            'SCHWAB_APP_SECRET': 'secret_12345678901234567890',
+            'GMAIL_USER': 'user@example.com'
+        }):
+            test_text = "Auth with key_12345678901234567890 secret_12345678901234567890 from user@example.com"
+            masked = main.mask_sensitive_text(test_text)
+            # No unmasked values should appear
+            self.assertNotIn('key_12345678901234567890', masked)
+            self.assertNotIn('secret_12345678901234567890', masked)
+            self.assertNotIn('user@example.com', masked)
+
+
 if __name__ == "__main__":
     unittest.main()
 
