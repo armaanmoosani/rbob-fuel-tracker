@@ -1632,13 +1632,14 @@ def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
     Resolve which futures contract to use for intraday pricing.
     
     When Schwab API is available, selects the contract with highest trading activity.
-    On activity ties (e.g., all return 0), prefers near-term contracts.
+    On activity ties (e.g., all return 0), prefers nearest contract — which naturally
+    aligns with how traders and platforms like Thinkorswim mark contracts as "active".
     Falls back to calendar-based front-month if API unavailable or fails.
     
-    Bug fix (May 2026): Reversed index scoring so near-term contracts win on ties.
-    Without this, the code would pick /RBU26 (Sep) instead of /RBN26 (Jul) when
-    Schwab returned zero activity for all candidates, because tuple comparison 
-    would pick the highest idx (furthest contract).
+    Bug fix (May 2026): Reverse index scoring on tiebreaker.
+    Without this, at 5pm when thin volume returns 0 for all contracts:
+    - Old code: tuple (1, 0.0, 3) > (1, 0.0, 1) → picked /RBU26 (furthest)
+    - Now: tuple (1, 0.0, -3) < (1, 0.0, -1) → picks /RBN26 (nearest, active)
     """
     def quote_float(quote, *keys):
         for key in keys:

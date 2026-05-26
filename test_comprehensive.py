@@ -1338,26 +1338,28 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
 
     @patch('main.requests.get')
     def test_12_5a_regression_near_term_on_tie(self, mock_get):
-        """Regression test for May 2026 bug: when all contracts have zero volume, pick nearest, not furthest."""
-        # All contracts return zero activity (no volume/openInterest)
+        """Regression test for May 2026 bug: pick nearest contract on activity tie."""
+        # Simulate May 26, 2026 at 5pm: all 4 candidates have zero activity (thin market)
         mock_response = MagicMock()
         mock_response.raise_for_status.return_value = None
         mock_response.json.return_value = {
-            '/RBM26': {'quote': {'symbol': '/RBM26', 'lastPrice': 2.10}},  # No volume - index 0
-            '/RBN26': {'quote': {'symbol': '/RBN26', 'lastPrice': 2.15}},  # No volume - index 1
-            '/RBQ26': {'quote': {'symbol': '/RBQ26', 'lastPrice': 2.20}},  # No volume - index 2
-            '/RBU26': {'quote': {'symbol': '/RBU26', 'lastPrice': 2.25}},  # No volume - index 3 (furthest)
+            '/RBM26': {'quote': {'symbol': '/RBM26', 'lastPrice': 2.10}},  # June - index 0
+            '/RBN26': {'quote': {'symbol': '/RBN26', 'lastPrice': 2.15}},  # July - index 1
+            '/RBQ26': {'quote': {'symbol': '/RBQ26', 'lastPrice': 2.20}},  # August - index 2
+            '/RBU26': {'quote': {'symbol': '/RBU26', 'lastPrice': 2.25}},  # September - index 3
         }
         mock_get.return_value = mock_response
 
         resolved = main.resolve_active_schwab_symbol(
             'RB',
-            datetime(2026, 5, 22, 12, 0, tzinfo=pytz.utc),
+            datetime(2026, 5, 26, 17, 0, tzinfo=pytz.utc),
             'dummy_token'
         )
 
-        # Must pick /RBM26 (nearest), not /RBU26 (furthest)
-        self.assertEqual(resolved, '/RBM26', "Bug regression: code picked furthest contract on activity tie")
+        # With zero activity for all, must pick /RBM26 (nearest/index 0), not /RBU26 (furthest/index 3)
+        # This naturally aligns with trader/Thinkorswim active contract (near-term gets liquidity)
+        self.assertEqual(resolved, '/RBM26', "Bug regression: should pick nearest contract on activity tie")
+
 
     @patch('main.yf.Ticker')
     @patch('main.requests.get')
