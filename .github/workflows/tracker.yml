@@ -28,6 +28,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -67,4 +69,4 @@ jobs:
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
           PHONE_SMS_ADDRESS: ${{ secrets.PHONE_SMS_ADDRESS }}
         run: |
-          python -c "import main, datetime; main.send_sms({}, datetime.datetime.now(main.TZ), {'label': 'FAILURE', 'action': 'RBOB Fuel Tracker failed!'})"
+          python -c "import main, datetime; main.send_sms({}, datetime.datetime.now(main.TZ), {'label': 'FAILURE', 'action': 'RBOB Fuel Tracker failed!'})" || echo "Failed to send SMS, but main.py may not be available"
