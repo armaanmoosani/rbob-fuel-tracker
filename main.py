@@ -1376,8 +1376,12 @@ def send_once_today(key, subject, all_data, now, alert_context):
         print(f"Warning: could not save lock {db_key}: {e}")
 
 def send_daily_prompt(now):
-    # Only run at 7:30 PM CT (19:30) on weekdays
+    # Only run at 7:30 PM CT (19:30) on weekdays (and not on holidays)
     if now.weekday() > 4 or not (now.hour == 19 and now.minute >= 30):
+        return
+    
+    if is_holiday(now):
+        print(f"Skipping daily price prompt on holiday ({now.astimezone(TZ).date()})")
         return
 
     session_str = get_session_date_str(now)
@@ -1422,6 +1426,10 @@ def main():
     
     start_time = datetime.now(timezone.utc)
     now = datetime.now(TZ)
+    
+    if is_holiday(now):
+        print(f"Today is a holiday ({now.date()}). Skipping price checks and alerts.")
+        return
     
     if not is_market_open(now):
         print(f"Market is closed at {now}. Exiting to prevent stale alerts.")
@@ -1594,6 +1602,11 @@ def is_market_open(dt):
         fallback_open = simple_globex_energy_hours(dt)
         print(f"Calendar check failed: {e}. Using simple Globex-hours fallback: open={fallback_open}.")
         return fallback_open
+
+def is_holiday(dt):
+    """Check if a given datetime is a US market holiday."""
+    local_date = dt.astimezone(TZ).date()
+    return local_date in us_market_holidays(local_date.year)
 
 def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
     def quote_float(quote, *keys):
