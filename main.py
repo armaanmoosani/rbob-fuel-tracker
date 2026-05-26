@@ -1628,6 +1628,18 @@ def is_holiday(dt):
     return local_date in us_market_holidays(local_date.year)
 
 def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
+    """
+    Resolve which futures contract to use for intraday pricing.
+    
+    When Schwab API is available, selects the contract with highest trading activity.
+    On activity ties (e.g., all return 0), prefers near-term contracts.
+    Falls back to calendar-based front-month if API unavailable or fails.
+    
+    Bug fix (May 2026): Reversed index scoring so near-term contracts win on ties.
+    Without this, the code would pick /RBU26 (Sep) instead of /RBN26 (Jul) when
+    Schwab returned zero activity for all candidates, because tuple comparison 
+    would pick the highest idx (furthest contract).
+    """
     def quote_float(quote, *keys):
         for key in keys:
             value = quote.get(key)
@@ -1664,7 +1676,7 @@ def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
         res_json = res.json()
 
         best_symbol = None
-        best_score = (-1, -1.0, -1)
+        best_score = (-1, -1.0, float('inf'))
         for idx, symbol in enumerate(candidates):
             quote_entry = None
             if symbol in res_json:
@@ -1680,7 +1692,7 @@ def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
             if current_price is None:
                 continue
             score = float(quote_activity(quote_entry))
-            candidate_score = (1, score, idx)
+            candidate_score = (1, score, -idx)
             if candidate_score > best_score:
                 best_score = candidate_score
                 best_symbol = symbol
