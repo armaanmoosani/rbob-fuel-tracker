@@ -296,15 +296,25 @@ def run_optimization(df, nymex_col, rack_col, prefix, cfg):
     win_rate = float(correct / alerts) if alerts > 0 else 0.70 # baseline fallback
     avg_savings = float(np.mean(savings_list)) if alerts > 0 else 0.0
 
-    # 3. 95% CVaR for Price Hikes (Waiting risk)
-    # The risk of waiting is when the price jumps.
-    # Take the average of all positive delta_rack moves in the worst 5% of cases (the largest hikes).
-    rack_hikes = valid_rack.values
-    if len(rack_hikes) >= 10:
-        cvar_threshold = np.percentile(rack_hikes, 95)
-        cvar_val = float(np.mean(rack_hikes[rack_hikes >= cvar_threshold]))
+    # 3. 95% CVaR of rack loss on WAIT (DROP) signal days only.
+    #
+    # Rationale: "Waiting risk" is the cost incurred when the system signals DROP but the
+    # rack rises anyway. We therefore filter valid_rows to days where the NYMEX move
+    # crossed the DROP threshold (ch <= smoothed_drop), then compute the CVaR on the
+    # resulting rack moves. A positive rack move on a WAIT day is a realized loss from
+    # waiting; the 95th-percentile tail average is the true operational tail risk.
+    #
+    # Including all rack moves (old approach) contaminates the distribution with BUY-day
+    # rack moves, understating the true tail risk on waiting decisions.
+    #
+    # Minimum 40 WAIT-day observations required so at least 2 data points (5% × 40)
+    # fall above the 95th-percentile threshold for a stable CVaR estimate.
+    wait_rack_moves = np.array([act for (ch, act) in valid_rows if ch <= smoothed_drop])
+    if len(wait_rack_moves) >= 40:
+        cvar_threshold_val = np.percentile(wait_rack_moves, 95)
+        cvar_val = float(np.mean(wait_rack_moves[wait_rack_moves >= cvar_threshold_val]))
     else:
-        cvar_val = 3.0 # default fallback
+        cvar_val = 3.0  # default fallback (insufficient WAIT-signal history)
 
     # 4. Conviction-conditional metrics computed over the full history
     conviction_bins = {

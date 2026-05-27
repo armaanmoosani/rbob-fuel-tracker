@@ -127,6 +127,7 @@ COMMODITIES = {
 REQUEST_TIMEOUT = 20
 MAX_GH_VARIABLE_VALUE_BYTES = 48 * 1024
 MAX_SMS_CHARS = 153
+TRUCK_GALLONS = 8500   # Standard truck load for dollar-value risk calculations
 
 # Load Config
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
@@ -484,20 +485,42 @@ def build_rack_signal(prefix, data, now):
     
     nymex_daily_std = APP_CONFIG.get(f"{prefix}_nymex_daily_std", 1.0)
     
-    # Calculate intraday realized volatility to check for regime shifts
+    # Calculate intraday realized volatility to check for genuine session regime shifts.
+    #
+    # Methodology:
+    #   - Compute the sample std of observed 5-min price changes in cents (per-interval vol).
+    #   - Derive the expected per-interval vol from the historical close-to-close daily std:
+    #       expected_interval_vol = nymex_daily_std / sqrt(GLOBEX_5MIN_INTERVALS)
+    #     (close-to-close daily std / sqrt(204) = expected 5-min move std assuming i.i.d.)
+    #   - The override fires ONLY when observed per-interval vol > 2× the expected baseline,
+    #     indicating a true intraday regime shift, not ordinary sampling noise.
+    #   - Minimum 36 intervals (3 hours) required for a stable std estimate; with n<36 the
+    #     95% CI on std(ddof=1) is too wide (>±45%) to distinguish regime shifts from noise.
+    #   - When the override fires, the full-session vol estimate is std_diffs * sqrt(204).
+    _GLOBEX_5MIN_INTERVALS = 204   # 17h × 12 five-minute intervals
+    _MIN_INTRADAY_INTERVALS = 36   # 3 hours minimum for a stable std estimate
+    _VOL_OVERRIDE_SIGMA = 2.0      # require 2× expected per-interval vol to trigger
     realized_vol = None
     schwab_symbol = data.get('schwab_symbol')
     if schwab_symbol:
         try:
             history_key = contract_state_prefix(prefix, schwab_symbol)
             history_intra = load_price_history(history_key)
-            if len(history_intra) >= 10:
+            if len(history_intra) >= _MIN_INTRADAY_INTERVALS:
                 prices = [h['p'] for h in history_intra]
                 diffs = [(prices[i] - prices[i-1]) * 100 for i in range(1, len(prices))]
-                if len(diffs) >= 9:
+                if len(diffs) >= _MIN_INTRADAY_INTERVALS - 1:
                     std_diffs = float(np.std(diffs, ddof=1))
-                    # Scale to daily: Globex is 17 hours = 204 intervals of 5 minutes
-                    realized_vol = std_diffs * np.sqrt(204)
+                    # Expected per-5-min vol from historical close-to-close daily std.
+                    # Dividing daily std by sqrt(204) gives the per-interval baseline.
+                    # This is conservative because close-to-close std includes overnight
+                    # gap variance (~30-50% of total energy futures daily variance), so
+                    # the per-interval baseline is slightly overstated, making the 2×
+                    # threshold harder to cross and reducing false positives.
+                    expected_interval_vol = nymex_daily_std / np.sqrt(_GLOBEX_5MIN_INTERVALS)
+                    if std_diffs > _VOL_OVERRIDE_SIGMA * expected_interval_vol:
+                        # Genuine intraday regime shift confirmed: scale to full-session vol
+                        realized_vol = std_diffs * np.sqrt(_GLOBEX_5MIN_INTERVALS)
         except Exception as vol_e:
             print(f"[{prefix}] Failed to compute realized volatility: {vol_e}")
             
@@ -583,9 +606,11 @@ def build_rack_signal(prefix, data, now):
         )
     elif "WAIT" in action:
         cvar = APP_CONFIG.get(f"{prefix}_historical_cvar", 3.0)
+        cvar_truck_dollars = (cvar / 100.0) * TRUCK_GALLONS
         risk_text = (
-            f"Risk Note: On the worst 5% of days historically, rack prices spiked +{cvar:.2f}¢/gal "
-            f"(+${cvar * 85:.0f} per standard 8,500-gallon truck). Defer purchase only if inventory capacity allows."
+            f"Risk Note: On the worst 5% of WAIT-signal days historically, rack prices spiked "
+            f"+{cvar:.2f}¢/gal (+${cvar_truck_dollars:,.0f} per {TRUCK_GALLONS:,}-gallon truck). "
+            f"Defer purchase only if inventory capacity allows."
         )
 
     if vol_override_msg:

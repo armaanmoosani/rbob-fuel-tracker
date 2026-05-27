@@ -1083,8 +1083,8 @@ class TestCategory11AlertFormatting(unittest.TestCase):
         
         risk_text = signal['risk_text']
         self.assertIn("Risk Note", risk_text)
-        self.assertIn("worst 5% of days", risk_text)
-        self.assertIn("standard 8,500-gallon truck", risk_text)
+        self.assertIn("worst 5% of WAIT-signal days", risk_text)
+        self.assertIn("8,500-gallon truck", risk_text)
         self.assertIn("29.78¢/gal", risk_text)
 
     def test_11_3_ho_insufficient_history_fallback(self):
@@ -1158,7 +1158,7 @@ class TestCategory11AlertFormatting(unittest.TestCase):
         self.assertIn("operational planning floor: 53%", html)
         
         self.assertIn("Risk Note", html)
-        self.assertIn("standard 8,500-gallon truck", html)
+        self.assertIn("8,500-gallon truck", html)
         self.assertIn("29.78¢/gal", html)
 
     def test_1_4_mask_recipient(self):
@@ -1423,7 +1423,11 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
     @patch('main.load_price_history')
     @patch('main.APP_CONFIG')
     def test_12_9_intraday_volatility_override(self, mock_config, mock_load_history):
-        # Setup config to return a standard nymex_daily_std of 1.0 (cents)
+        # Setup config: nymex_daily_std = 1.0 cent (very low historical vol baseline).
+        # expected_interval_vol = 1.0 / sqrt(204) ≈ 0.070¢ per 5-min interval.
+        # Override threshold = 2× 0.070 = 0.140¢ per interval.
+        # The mock data alternates ±10¢ per interval → std_diffs ≈ 10¢ >> 0.140¢,
+        # so the regime-shift override WILL fire and lower the Z-score to Low Conviction.
         mock_config.get.side_effect = lambda key, default=None: {
             'RB_HIKE_THRESHOLD_CENTS': 1.0,
             'RB_DROP_THRESHOLD_CENTS': -1.0,
@@ -1431,32 +1435,26 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
             'RB_LEAN_DROP_CENTS': -0.5,
             'RB_nymex_daily_std': 1.0
         }.get(key, default)
-        
-        # Setup high-volatility price history: 10 points with large changes
+
+        # 36 data points (3 hours at 5-min intervals) — the new minimum required.
+        # Alternating 2.00/2.10 produces ±10¢ per-interval moves.
         mock_load_history.return_value = [
-            {"t": "2026-05-23T12:00:00", "p": 2.00},
-            {"t": "2026-05-23T12:05:00", "p": 2.10},
-            {"t": "2026-05-23T12:10:00", "p": 2.00},
-            {"t": "2026-05-23T12:15:00", "p": 2.10},
-            {"t": "2026-05-23T12:20:00", "p": 2.00},
-            {"t": "2026-05-23T12:25:00", "p": 2.10},
-            {"t": "2026-05-23T12:30:00", "p": 2.00},
-            {"t": "2026-05-23T12:35:00", "p": 2.10},
-            {"t": "2026-05-23T12:40:00", "p": 2.00},
-            {"t": "2026-05-23T12:45:00", "p": 2.10},
+            {"t": f"2026-05-23T{9 + i // 12:02d}:{(i % 12) * 5:02d}:00",
+             "p": 2.00 if i % 2 == 0 else 2.10}
+            for i in range(36)
         ]
-        
+
         data = {
             'current_price': 2.10,
             'yesterday_close': 2.00,
             'open_price': 2.00,
             'schwab_symbol': '/RBK26'
         }
-        
+
         signal = main.build_rack_signal('RB', data, datetime(2026, 5, 23, 13, 0))
-        
-        # The change_cents is 10.0.
-        # With override, Z-score is scaled down to ~0.06 (Low Conviction) instead of 10.0 (High Conviction)
+
+        # change_cents = 10.0¢; realized_vol ≈ 10 * sqrt(204) ≈ 142.8¢
+        # Z-score = 10.0 / 142.8 ≈ 0.07 → Low Conviction (|Z| < 1.0)
         self.assertEqual(signal['conviction'], 'Low Conviction')
         self.assertIn("dynamic intraday vol override", signal['risk_text'])
 
