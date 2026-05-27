@@ -1559,14 +1559,26 @@ class TestCategory13LiveValidationAndRobustness(unittest.TestCase):
                 with patch('ingest_prices.read_daily_settlement') as mock_settle:
                     mock_settle.return_value = {"rbob_settlement": 2.05, "heating_oil_settlement": 2.15}
                     with patch('ingest_prices.git_pull_rebase'), patch('ingest_prices.git_commit_push'):
-                        with patch('ingest_prices.CSV_PATH', self.csv_path):
+                        with patch('ingest_prices.CSV_PATH', self.csv_path), \
+                             patch('ingest_prices.DATA_DIR', self.temp_dir):
                             with open(self.csv_path, "w") as f:
                                 f.write("date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
+                                f.write("2026-05-21,2.05,2.15,2.10,2.20,2.30\n")
+                            # Write a minimal valid prediction_log.csv so validate_all passes
+                            log_path = os.path.join(self.temp_dir, "prediction_log.csv")
+                            with open(log_path, "w") as f:
+                                f.write("timestamp,commodity,predicted_direction,nymex_move_cents,lag_used,window_used,threshold_used,actual_next_day_move_cents,prediction_source\n")
+                            # Write a minimal config.json so validate_all does not error on JSON check
+                            config_path = os.path.join(self.temp_dir, "config.json")
+                            with open(config_path, "w") as f:
+                                f.write("{}\n")
+
                             
                             try:
                                 ingest_prices.main()
                             except SystemExit:
                                 pass
+
         
         mock_send_email.assert_called_once()
         args, kwargs = mock_send_email.call_args
