@@ -530,13 +530,16 @@ if __name__ == "__main__":
     elif PREVIEW_MODE == 'swing':
         sim_ref   = current_price / (1 - 0.031)
         swing_pct = ((current_price - sim_ref) / sim_ref) * 100
+        dollar_swing = current_price - sim_ref
+        ps = '+' if swing_pct >= 0 else ''
+        pds = '+' if dollar_swing >= 0 else '-'
         subject   = f"Wholesale Gas (/RB) Price Move: {swing_pct:+.2f}% — ${current_price:.4f}/gal"
         alert_context = {
-            'label': f'Price Movement Alert — {swing_pct:+.2f}% from Last Reference',
+            'label': 'Price Movement Alert',
             'action': (
-                f"Wholesale Gas (/RB) has moved {swing_pct:+.2f}% from the last alert reference "
-                f"(${sim_ref:.4f}). Current: ${current_price:.4f}/gal. "
-                f"Day range: ${low_price:.4f} \u2013 ${high_price:.4f}."
+                f"Significant price movement detected: "
+                f"Wholesale Gas {ps}{swing_pct:.2f}% ({pds}${abs(dollar_swing):.4f}/gal) "
+                f"from last reference point of ${sim_ref:.4f}/gal."
             ),
             'action_color': '#22c55e' if swing_pct < 0 else '#ef4444',
         }

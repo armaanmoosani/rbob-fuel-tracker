@@ -1554,9 +1554,12 @@ def main():
         
         if abs(swing) >= 1.5:
             any_swing = True
-            ps = '+' if swing > 0 else ''
+            ps = '+' if swing >= 0 else ''
             dollar_swing = curr - ref
-            swing_trigger_desc.append(f"{COMMODITIES[prefix]['name']} {ps}{swing:.2f}%")
+            pds = '+' if dollar_swing >= 0 else '-'
+            swing_trigger_desc.append(
+                f"{COMMODITIES[prefix]['name']} {ps}{swing:.2f}% ({pds}${abs(dollar_swing):.4f}/gal) from last reference point of ${ref:.4f}/gal"
+            )
             swing_colors.append('#f97316' if swing > 0 else '#22c55e')
             try:
                 set_repo_variable(
@@ -1577,7 +1580,7 @@ def main():
             now=now,
             alert_context={
                 'label': 'Price Movement Alert',
-                'action': f"Significant price movement detected from last reference point ({', '.join(swing_trigger_desc)}).",
+                'action': f"Significant price movement detected: {', '.join(swing_trigger_desc)}.",
                 'action_color': swing_colors[0]
             }
         )
