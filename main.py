@@ -1841,13 +1841,15 @@ def fetch_commodity(prefix, cfg, now, access_token):
     session_date = datetime.fromisoformat(session_date_str).date()
     
     yesterday_close = None
-    # Prioritize graves_history.csv daily settlements for yesterday_close
+    five_day_high = five_day_low = thirty_day_avg = sma_3 = sma_10 = None
+    history_5d = []
+    # Prioritize graves_history.csv daily settlements for yesterday_close and compute fallback stats
     try:
         col_idx = 1 if prefix == "RB" else 2
         csv_file_path = os.path.join(DATA_DIR, "graves_history.csv")
         if os.path.exists(csv_file_path):
-            best_date = None
-            with open(csv_file_path, "r") as f:
+            hist_records = []
+            with open(csv_file_path, "r", encoding="utf-8") as f:
                 reader = csv.reader(f)
                 header = next(reader, None) # skip header
                 for row in reader:
@@ -1856,22 +1858,36 @@ def fetch_commodity(prefix, cfg, now, access_token):
                         if row_date_str:
                             try:
                                 row_date = datetime.fromisoformat(row_date_str).date()
-                                if row_date < session_date:
-                                    yesterday_close = float(row[col_idx].strip())
-                                    best_date = row_date
+                                val_str = row[col_idx].strip()
+                                if val_str:
+                                    val = float(val_str)
+                                    if row_date < session_date:
+                                        hist_records.append((row_date, val))
                             except (ValueError, IndexError):
                                 pass
-            if yesterday_close is not None:
+            if hist_records:
+                hist_records.sort(key=lambda x: x[0])
+                best_date, yesterday_close = hist_records[-1]
                 print(f"[{prefix}] Prioritized yesterday_close from local CSV (date: {best_date}): {yesterday_close}")
+                
+                # Extract clean list of prices
+                hist_prices = [x[1] for x in hist_records]
+                
+                # Set fallback statistics in case yfinance fails
+                thirty_day_avg = float(sum(hist_prices[-30:]) / len(hist_prices[-30:]))
+                if len(hist_prices) >= 3:
+                    sma_3 = float(sum(hist_prices[-3:]) / len(hist_prices[-3:]))
+                if len(hist_prices) >= 10:
+                    sma_10 = float(sum(hist_prices[-10:]) / len(hist_prices[-10:]))
+                five_day_high = float(max(hist_prices[-5:]))
+                five_day_low  = float(min(hist_prices[-5:]))
     except Exception as e:
-        print(f"[{prefix}] Failed to read yesterday_close from CSV: {e}")
+        print(f"[{prefix}] Failed to read statistics fallback from CSV: {e}")
 
     # Fallback to Schwab close price if CSV not found/empty
     if yesterday_close is None and data_source == 'schwab' and schwab_close > 0:
         yesterday_close = schwab_close
         
-    five_day_high = five_day_low = thirty_day_avg = sma_3 = sma_10 = None
-    history_5d = []
     try:
         yf_t = yf.Ticker(dynamic_yf_symbol)
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
