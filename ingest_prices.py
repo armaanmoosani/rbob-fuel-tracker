@@ -168,26 +168,38 @@ def check_inbox_for_prices(target_date_str):
         # Look back 2 days to handle any timezone/date boundary differences
         since_date = (datetime.now(TZ) - timedelta(days=2)).strftime("%d-%b-%Y")
         
-        # Hyper-specific, non-invasive search query that ignores UNSEEN status so you can read them yourself
-        search_query = f'(FROM "donotreply@gravesoil.com" SUBJECT "Latest prices from Graves Oil Company" SINCE "{since_date}")'
+        # Broadened search: match subject keywords first, then fall back to domain
+        search_query = f'(SINCE "{since_date}" SUBJECT "Latest prices")'
         status, messages = mail.search(None, search_query)
-        
+
         if status != "OK" or not messages[0]:
-            print(f"IMAP search returned no messages. Status: {status}, Query: {mask_sensitive_text(search_query)}")
-            return None, None
+            # Try a looser domain-based search as a fallback
+            alt_query = f'(SINCE "{since_date}" FROM "gravesoil.com")'
+            status2, messages2 = mail.search(None, alt_query)
+            if status2 == "OK" and messages2[0]:
+                messages = messages2
+                print(f"IMAP search fell back to domain search. Query: {mask_sensitive_text(alt_query)}")
+            else:
+                print(f"IMAP search returned no messages. Status: {status}, Query: {mask_sensitive_text(search_query)}")
+                return None, None
 
         # Process the most recent email first
         for num in reversed(messages[0].split()):
             try:
                 status, data = mail.fetch(num, '(RFC822)')
                 msg = email.message_from_bytes(data[0][1])
-                
-                # Verify that the email belongs to the target date
+
+                # Helpful debug info: show From/Subject/Date to action logs
+                from_hdr = msg.get('From')
+                subject = msg.get('Subject')
                 email_date = email.utils.parsedate_to_datetime(msg.get('Date'))
+                print(f"Examining email From: {mask_sensitive_text(from_hdr)} Subject: {mask_sensitive_text(subject)} Date: {email_date.astimezone(TZ) if email_date else 'None'}")
+
+                # Verify that the email belongs to the target date
                 if not email_date:
                     continue
                 local_date_str = email_date.astimezone(TZ).date().isoformat()
-                
+
                 if local_date_str != target_date_str:
                     continue
 
@@ -206,14 +218,27 @@ def check_inbox_for_prices(target_date_str):
                     if payload:
                         body = payload.decode('utf-8', errors='ignore')
 
+                # Primary extraction: labels near known markers
                 prices = []
+                labels_found = True
                 for key, label in LABELS.items():
                     p = extract_price_near_label(body, label)
                     if p is None or not (price_min <= p <= price_max):
+                        labels_found = False
                         break
                     prices.append(p)
-                    
+
+                # Fallback extraction: find any dollar amounts in the body
+                if not labels_found or len(prices) < 3:
+                    found = re.findall(r'\$?(\d+\.\d{2,4})', body)
+                    found_nums = [float(x) for x in found if price_min <= float(x) <= price_max]
+                    if len(found_nums) >= 3:
+                        prices = found_nums[:3]
+
                 if len(prices) == 3:
+                    # Log a masked snippet for diagnostics
+                    snippet = mask_sensitive_text(body[:400])
+                    print(f"Parsed prices from email: {prices}. Snippet: {snippet}")
                     return local_date_str, tuple(prices)
             except Exception as loop_e:
                 print(f"Skipping badly formatted email {num}: {mask_sensitive_text(loop_e)}")
