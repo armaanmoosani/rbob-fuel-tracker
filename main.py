@@ -28,12 +28,13 @@ except ImportError:
 SCHWAB_APP_KEY       = os.environ.get('SCHWAB_APP_KEY', '')
 SCHWAB_APP_SECRET    = os.environ.get('SCHWAB_APP_SECRET', '')
 SCHWAB_REFRESH_TOKEN = os.environ.get('SCHWAB_REFRESH_TOKEN', '')
-GH_PAT               = os.environ['GH_PAT']
-GH_REPO              = os.environ['GH_REPO']
-GMAIL_USER           = os.environ['GMAIL_USER']
-GMAIL_APP_PASSWORD   = os.environ['GMAIL_APP_PASSWORD']
-TO_EMAIL             = [e.strip() for e in os.environ['TO_EMAIL'].split(',') if e.strip()]
-TO_PHONE_SMS         = [p.strip() for p in os.environ.get('PHONE_SMS_ADDRESS', os.environ['TO_EMAIL']).split(',') if p.strip()]
+GH_PAT               = os.environ.get('GH_PAT', '')
+GH_REPO              = os.environ.get('GH_REPO', '')
+GMAIL_USER           = os.environ.get('GMAIL_USER', '')
+GMAIL_APP_PASSWORD   = os.environ.get('GMAIL_APP_PASSWORD', '')
+_to_email_raw        = os.environ.get('TO_EMAIL', '')
+TO_EMAIL             = [e.strip() for e in _to_email_raw.split(',') if e.strip()]
+TO_PHONE_SMS         = [p.strip() for p in os.environ.get('PHONE_SMS_ADDRESS', _to_email_raw).split(',') if p.strip()]
 
 import re
 

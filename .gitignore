@@ -7,7 +7,6 @@ main.py.ast
 main.py.clean
 log.txt
 data/daily_settlement.json
-data/integrity_hashes.csv
 data/prediction_log.csv
 historical_import/download_graves_pdfs.py
 historical_import/extract_to_csv.py
