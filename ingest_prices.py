@@ -125,10 +125,18 @@ LABELS = {
 }
 
 def extract_price_near_label(text, label):
-    pattern = rf'{re.escape(label)}[^\n]{{0,60}}?\$?(\d+\.\d{{2,5}})'
-    match = re.search(pattern, text, re.IGNORECASE)
-    if match:
-        return float(match.group(1))
+    """Find label in text; return the first price number within 60 chars AFTER it on the same line only."""
+    lines = text.splitlines()
+    price_pattern = re.compile(r'\$?(\d+\.\d{2,5})')
+    label_lower = label.lower()
+    for line in lines:
+        pos = line.lower().find(label_lower)
+        if pos != -1:
+            # Search only within 60 characters AFTER the label on this line
+            after_label = line[pos + len(label): pos + len(label) + 60]
+            m = price_pattern.search(after_label)
+            if m:
+                return float(m.group(1))
     return None
 
 def check_inbox_for_prices(target_date_str):
@@ -219,27 +227,22 @@ def check_inbox_for_prices(target_date_str):
                         body = payload.decode('utf-8', errors='ignore')
 
                 # Primary extraction: labels near known markers
-                prices = []
-                labels_found = True
+                prices = {}
                 for key, label in LABELS.items():
                     p = extract_price_near_label(body, label)
                     if p is None or not (price_min <= p <= price_max):
-                        labels_found = False
+                        print(f"Label extraction failed for '{label}' (got {p}). Skipping this email.")
+                        prices = {}
                         break
-                    prices.append(p)
-
-                # Fallback extraction: find any dollar amounts in the body
-                if not labels_found or len(prices) < 3:
-                    found = re.findall(r'\$?(\d+\.\d{2,4})', body)
-                    found_nums = [float(x) for x in found if price_min <= float(x) <= price_max]
-                    if len(found_nums) >= 3:
-                        prices = found_nums[:3]
+                    prices[key] = p
 
                 if len(prices) == 3:
-                    # Log a masked snippet for diagnostics
-                    snippet = mask_sensitive_text(body[:400])
-                    print(f"Parsed prices from email: {prices}. Snippet: {snippet}")
-                    return local_date_str, tuple(prices)
+                    rack_u = prices['rack_u']
+                    rack_p = prices['rack_p']
+                    rack_d = prices['rack_d']
+                    print(f"Parsed prices from email: Unleaded={rack_u}, Premium={rack_p}, Diesel={rack_d}")
+                    return local_date_str, (rack_u, rack_p, rack_d)
+
             except Exception as loop_e:
                 print(f"Skipping badly formatted email {num}: {mask_sensitive_text(loop_e)}")
                 continue
