@@ -1169,7 +1169,7 @@ def build_html_email(subject, all_data, now, alert_context):
                 crack_chg = crack - yest_crack
                 sign = '+' if crack_chg >= 0 else ''
                 trend_color = '#22c55e' if crack_chg >= 0 else '#ef4444'
-                trend_text = "Widening refinery margin" if crack_chg >= 0 else "Shrinking refinery margin"
+                trend_text = "Widening refinery margin (Upward trend on fuel prices)" if crack_chg >= 0 else "Shrinking refinery margin (Downward trend on fuel prices)"
                 trend_str = f'<span style="color:{trend_color};font-weight:700;">{sign}${crack_chg:.2f} / bbl</span> &nbsp;&middot;&nbsp; <span>{trend_text}</span>'
             
             crack_spread_html = f'''
