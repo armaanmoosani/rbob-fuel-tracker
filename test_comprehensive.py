@@ -1515,6 +1515,38 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
             main.DATA_DIR = orig_data_dir
             shutil.rmtree(temp_dir)
 
+    @patch('main.get_repo_variable')
+    @patch('main.set_repo_variable')
+    @patch('main.smtplib.SMTP')
+    def test_12_11_send_daily_prompt_skip_if_ingested(self, mock_smtp, mock_set_var, mock_get_var):
+        # Set up a fake DATA_DIR for main
+        with patch('main.DATA_DIR', self.temp_dir):
+            tz = pytz.timezone('America/Chicago')
+            dt_735 = tz.localize(datetime(2026, 5, 22, 19, 35, 0)) # Friday
+            
+            # Scenario A: CSV exists and contains today's date "2026-05-22"
+            with open(self.csv_path, "w", encoding="utf-8") as f:
+                f.write("date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
+                f.write("2026-05-22,2.10,2.20,2.30,2.40,2.50\n")
+                
+            # Call send_daily_prompt — it should see prices already ingested and skip (no get_repo_variable or set_repo_variable or SMTP should be called)
+            main.send_daily_prompt(dt_735)
+            mock_get_var.assert_not_called()
+            mock_set_var.assert_not_called()
+            mock_smtp.assert_not_called()
+            
+            # Scenario B: CSV exists but does NOT contain today's date (contains older date)
+            with open(self.csv_path, "w", encoding="utf-8") as f:
+                f.write("date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
+                f.write("2026-05-21,2.10,2.20,2.30,2.40,2.50\n")
+                
+            mock_get_var.return_value = None # Not sent yet
+            
+            # Call send_daily_prompt — it should NOT skip and try to send SMS
+            main.send_daily_prompt(dt_735)
+            mock_get_var.assert_called_once()
+            mock_smtp.assert_called_once()
+
 
 class TestCategory13LiveValidationAndRobustness(unittest.TestCase):
     """Category 13: Live Validation & Robustness Regression Tests"""

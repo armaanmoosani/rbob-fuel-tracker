@@ -1419,6 +1419,20 @@ def send_daily_prompt(now):
         print(f"Skipping daily price prompt on holiday ({now.astimezone(TZ).date()})")
         return
 
+    # Check if today's prices have already been ingested to prevent duplicate prompts
+    today_str = now.date().isoformat()
+    csv_file = os.path.join(DATA_DIR, "graves_history.csv")
+    if os.path.exists(csv_file):
+        try:
+            with open(csv_file, "r") as f:
+                for line in f:
+                    parts = line.strip().split(',')
+                    if parts and parts[0] == today_str:
+                        print(f"Graves Oil prices for today ({today_str}) are already ingested. Skipping daily SMS prompt.")
+                        return
+        except Exception as e:
+            print(f"Warning: could not read graves_history.csv to check ingestion status: {e}")
+
     session_str = get_session_date_str(now)
     db_key = "SENT_DAILY_PROMPT"
     
