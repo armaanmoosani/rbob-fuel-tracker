@@ -1401,6 +1401,7 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
         self.assertEqual(res['current_price'], 2.20)
         mock_resolve.assert_called_once_with('RB', datetime(2026, 5, 22, 12, 0, tzinfo=pytz.utc), 'token')
 
+    @patch('main.TO_PHONE_SMS', ['test@vzwpix.com'])
     @patch('smtplib.SMTP')
     def test_12_6_sms_gateway_silent_outbound_failure(self, mock_smtp):
         # Mock SMTP to raise exception on connection/login
