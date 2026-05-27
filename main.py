@@ -1736,9 +1736,6 @@ def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
                     )
                 if not quote_entry:
                     continue
-                current_price = quote_float(quote_entry, 'lastPrice', 'mark', 'bidPrice', 'askPrice')
-                if current_price is None:
-                    continue
                 score = float(quote_activity(quote_entry))
                 candidate_score = (1, score, -idx)
                 if candidate_score > best_score:
@@ -1768,7 +1765,24 @@ def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
 
 
 def fetch_commodity(prefix, cfg, now, access_token):
-    schwab_symbol = resolve_active_schwab_symbol(prefix, now, access_token)
+    # Retrieve or resolve the active symbol for the session to ensure consistency
+    state = load_alert_state()
+    session_str = get_session_date_str(now)
+    cache_key = f"ACTIVE_SYMBOL_{prefix}_{session_str}"
+    
+    cached_symbol = state.get(cache_key)
+    if cached_symbol:
+        schwab_symbol = cached_symbol
+        print(f"[{prefix}] Using cached active symbol for session {session_str}: {schwab_symbol}")
+    else:
+        schwab_symbol = resolve_active_schwab_symbol(prefix, now, access_token)
+        state[cache_key] = schwab_symbol
+        try:
+            save_alert_state(state)
+            print(f"[{prefix}] Resolved and cached active symbol for session {session_str}: {schwab_symbol}")
+        except Exception as e:
+            print(f"Warning: could not save active symbol to alert state: {e}")
+            
     dynamic_yf_symbol = schwab_to_yfinance_symbol(schwab_symbol)
     print(f"[{prefix}] Targeting front-month: Schwab {schwab_symbol} | yf {dynamic_yf_symbol}")
     

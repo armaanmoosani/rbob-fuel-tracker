@@ -1401,6 +1401,96 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
         self.assertEqual(res['current_price'], 2.20)
         mock_resolve.assert_called_once_with('RB', datetime(2026, 5, 22, 12, 0, tzinfo=pytz.utc), 'token')
 
+    @patch('main.save_alert_state')
+    @patch('main.load_alert_state')
+    @patch('main.yf.Ticker')
+    @patch('main.requests.get')
+    @patch('main.resolve_active_schwab_symbol')
+    def test_12_5c_fetch_commodity_uses_cached_active_symbol(self, mock_resolve, mock_get, mock_ticker, mock_load, mock_save):
+        # Cache has '/RBN26' for the session 2026-05-22
+        mock_load.return_value = {
+            'ACTIVE_SYMBOL_RB_2026-05-22': '/RBN26'
+        }
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            '/RBN26': {
+                'quote': {
+                    'lastPrice': 2.20,
+                    'openPrice': 2.10,
+                    'highPrice': 2.25,
+                    'lowPrice': 2.00,
+                    'closePrice': 2.05
+                }
+            }
+        }
+        mock_get.return_value = mock_response
+
+        mock_history = MagicMock()
+        h5d = pd.DataFrame(
+            {'Close': [2.20], 'High': [2.25], 'Low': [2.00]},
+            index=[datetime(2026, 5, 21, tzinfo=pytz.utc)]
+        )
+        h30d = pd.DataFrame(
+            {'Close': [2.05]},
+            index=[datetime(2026, 5, 21, tzinfo=pytz.utc)]
+        )
+        mock_history.history.side_effect = [h5d, h30d]
+        mock_ticker.return_value = mock_history
+
+        cfg = {'name': 'Wholesale Gas', 'yf_symbol': 'RB=F'}
+        res = main.fetch_commodity('RB', cfg, datetime(2026, 5, 22, 12, 0, tzinfo=pytz.utc), 'token')
+
+        self.assertEqual(res['schwab_symbol'], '/RBN26')
+        self.assertEqual(res['current_price'], 2.20)
+        mock_resolve.assert_not_called()
+
+    @patch('main.save_alert_state')
+    @patch('main.load_alert_state')
+    @patch('main.yf.Ticker')
+    @patch('main.requests.get')
+    @patch('main.resolve_active_schwab_symbol')
+    def test_12_5c_fetch_commodity_resolves_and_caches_active_symbol_if_empty(self, mock_resolve, mock_get, mock_ticker, mock_load, mock_save):
+        mock_load.return_value = {}
+        mock_resolve.return_value = '/RBN26'
+
+        mock_response = MagicMock()
+        mock_response.raise_for_status.return_value = None
+        mock_response.json.return_value = {
+            '/RBN26': {
+                'quote': {
+                    'lastPrice': 2.20,
+                    'openPrice': 2.10,
+                    'highPrice': 2.25,
+                    'lowPrice': 2.00,
+                    'closePrice': 2.05
+                }
+            }
+        }
+        mock_get.return_value = mock_response
+
+        mock_history = MagicMock()
+        h5d = pd.DataFrame(
+            {'Close': [2.20], 'High': [2.25], 'Low': [2.00]},
+            index=[datetime(2026, 5, 21, tzinfo=pytz.utc)]
+        )
+        h30d = pd.DataFrame(
+            {'Close': [2.05]},
+            index=[datetime(2026, 5, 21, tzinfo=pytz.utc)]
+        )
+        mock_history.history.side_effect = [h5d, h30d]
+        mock_ticker.return_value = mock_history
+
+        cfg = {'name': 'Wholesale Gas', 'yf_symbol': 'RB=F'}
+        res = main.fetch_commodity('RB', cfg, datetime(2026, 5, 22, 12, 0, tzinfo=pytz.utc), 'token')
+
+        self.assertEqual(res['schwab_symbol'], '/RBN26')
+        mock_resolve.assert_called_once_with('RB', datetime(2026, 5, 22, 12, 0, tzinfo=pytz.utc), 'token')
+        mock_save.assert_called_once()
+        saved_state = mock_save.call_args[0][0]
+        self.assertEqual(saved_state['ACTIVE_SYMBOL_RB_2026-05-22'], '/RBN26')
+
     @patch('main.TO_PHONE_SMS', ['test@vzwpix.com'])
     @patch('smtplib.SMTP')
     def test_12_6_sms_gateway_silent_outbound_failure(self, mock_smtp):
