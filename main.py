@@ -1127,16 +1127,6 @@ def build_html_email(subject, all_data, now, alert_context):
       <p style="margin:8px 0 0;font-size:11px;color:#64748b;line-height:1.5;">
         Action thresholds: Unleaded +/-{APP_CONFIG.get('RB_HIKE_THRESHOLD_CENTS', 1.0):.2f} c/gal | Diesel +/-{APP_CONFIG.get('HO_HIKE_THRESHOLD_CENTS', 1.0):.2f} c/gal. Confidence levels are adjusted dynamically using rolling historical volatility.
       </p>
-    </div>
-    <div style="padding:14px 20px;background:#fffbeb;border-left:4px solid #d97706;border:1px solid #fde68a;margin-bottom:15px;border-radius:4px;">
-      <p style="margin:0 0 6px;font-size:11px;color:#b45309;text-transform:uppercase;letter-spacing:0.05em;font-weight:800;margin-bottom:8px;">
-        Operational Checklist & Dispatch Rules
-      </p>
-      <ul style="margin:0;padding-left:20px;font-size:12px;color:#451a03;line-height:1.6;">
-        <li><strong>Contract Price Lock Warning:</strong> Under your Graves Oil contract, prices lock at <em>physical loading time</em>, not order time. For BUY alerts, you must demand that dispatch load the truck before midnight CT. If loaded the next morning, you will pay the hiked price.</li>
-        <li><strong>Inventory & Holding Cost Check:</strong> Do not top off tanks unless you have at least 2,000–3,000 gallons of spare capacity. Ensure the arbitrage savings exceed the cost of tying up capital.</li>
-        <li><strong>Run-Dry Check:</strong> If this is a WAIT alert, do not delay the order if your tanks will run below safety margins before tomorrow. Running dry is far more costly than missing an arbitrage window.</li>
-      </ul>
     </div>'''
     elif alert_context.get('action'):
         ac = alert_context.get('action_color', '#64748b')

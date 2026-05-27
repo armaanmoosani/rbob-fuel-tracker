@@ -2089,10 +2089,8 @@ class TestCategory18OperationalPricingRules(unittest.TestCase):
         # Verify no emojis
         self.assertNotIn("⚠️", html_body)
         
-        # Verify warnings box is present
-        self.assertIn("Operational Checklist & Dispatch Rules", html_body)
-        self.assertIn("Contract Price Lock Warning", html_body)
-        self.assertIn("demand that dispatch load the truck before midnight", html_body)
+        # Verify warnings box is not present
+        self.assertNotIn("Operational Checklist & Dispatch Rules", html_body)
         
         # Verify realized savings is displayed and scaled
         # 10.0 * 0.50 = 5.00
@@ -2275,7 +2273,7 @@ class TestCategory19EndToEndTuesdaySimulation(unittest.TestCase):
         self.assertIn("UNLEADED HIKE LIKELY:", html_body)
         self.assertIn("Est. Realized Savings: +2.00¢/gal (at 50% same-day dispatch rate)", html_body)
         self.assertIn("Low Conviction — do not act on this signal unless inventory forces you to order regardless.", html_body)
-        self.assertIn("Operational Checklist & Dispatch Rules", html_body)
+        self.assertNotIn("Operational Checklist & Dispatch Rules", html_body)
         
         # 3. Verify SMS body
         with patch('main.TO_PHONE_SMS', ['1234567890@vtext.com']), \
@@ -2347,7 +2345,7 @@ class TestCategory19EndToEndTuesdaySimulation(unittest.TestCase):
         self.assertIn("UNLEADED HIKE LIKELY:", html_body)
         self.assertIn("Est. Realized Savings: +7.00¢/gal (at 50% same-day dispatch rate)", html_body)
         self.assertIn("Dispatch before the rack deadline if you need inventory.", html_body)
-        self.assertIn("Operational Checklist & Dispatch Rules", html_body)
+        self.assertNotIn("Operational Checklist & Dispatch Rules", html_body)
         
         # 3. Verify SMS body
         with patch('main.TO_PHONE_SMS', ['1234567890@vtext.com']), \
