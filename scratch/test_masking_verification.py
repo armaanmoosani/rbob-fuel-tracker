@@ -5,17 +5,25 @@ import sys
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 # Set dummy env vars for all required env vars at import time
-os.environ['GH_PAT'] = 'dummy_pat'
-os.environ['GH_REPO'] = 'dummy/repo'
-os.environ['GMAIL_USER'] = 'mygmail@gmail.com'
-os.environ['GMAIL_APP_PASSWORD'] = 'dummy_pass'
-os.environ['TO_EMAIL'] = 'recipient1@example.com,recipient2@example.com'
+os.environ['GH_PAT'] = 'mock_pat'
+os.environ['GH_REPO'] = 'mock_repo'
+os.environ['GMAIL_USER'] = 'mock_user'
+os.environ['GMAIL_APP_PASSWORD'] = 'mock_pass'
+os.environ['TO_EMAIL'] = 'mock_to@example.com'
 os.environ['PHONE_SMS_ADDRESS'] = '5551234567@vtext.com'
-os.environ['GRAVES_EMAIL'] = 'graves_secrets@gravesoil.com'
+os.environ['GRAVES_EMAIL'] = 'mock_graves@example.com'
 
 import main
 
 def test_masking():
+    # Set the specific environment variables for this test to be independent of other test files
+    os.environ['GMAIL_USER'] = 'mygmail@gmail.com'
+    os.environ['TO_EMAIL'] = 'recipient1@example.com,recipient2@example.com'
+    os.environ['PHONE_SMS_ADDRESS'] = '5551234567@vtext.com'
+    os.environ['GRAVES_EMAIL'] = 'graves_secrets@gravesoil.com'
+    os.environ['GH_PAT'] = 'mock_pat'
+    os.environ['GH_REPO'] = 'mock_repo'
+
     print("Running masking verification tests...")
     
     # 1. Test mask_recipient direct calls

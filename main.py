@@ -37,6 +37,7 @@ TO_EMAIL             = [e.strip() for e in _to_email_raw.split(',') if e.strip()
 TO_PHONE_SMS         = [p.strip() for p in os.environ.get('PHONE_SMS_ADDRESS', _to_email_raw).split(',') if p.strip()]
 
 import re
+import csv
 
 def mask_recipient(address):
     if not address:
