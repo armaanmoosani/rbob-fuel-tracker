@@ -34,7 +34,7 @@ GMAIL_USER           = os.environ.get('GMAIL_USER', '')
 GMAIL_APP_PASSWORD   = os.environ.get('GMAIL_APP_PASSWORD', '')
 _to_email_raw        = os.environ.get('TO_EMAIL', '')
 TO_EMAIL             = [e.strip() for e in _to_email_raw.split(',') if e.strip()]
-TO_PHONE_SMS         = [p.strip() for p in os.environ.get('PHONE_SMS_ADDRESS', _to_email_raw).split(',') if p.strip()]
+TO_PHONE_SMS         = [p.strip() for p in os.environ.get('PHONE_SMS_ADDRESS', '').split(',') if p.strip()]
 
 import re
 import csv
@@ -1333,18 +1333,22 @@ def send_sms(all_data, now, alert_context):
         body = body[:MAX_SMS_CHARS].rstrip()
 
     try:
-        sms_msg = MIMEText(body)
-        sms_msg['Subject'] = ''
-        sms_msg['From']    = GMAIL_USER
-        
         srv = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)
         srv.starttls()
         srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         
         phones = TO_PHONE_SMS
         for phone in phones:
-            sms_msg.replace_header('To', phone) if 'To' in sms_msg else sms_msg.add_header('To', phone)
-            srv.sendmail(GMAIL_USER, phone, sms_msg.as_string())
+            # Construct a fresh MIMEText per recipient — never mutate a shared
+            # MIME object across multiple sendmail() calls, as header state bleeds.
+            per_msg = MIMEText(body)
+            # Many carrier email-to-SMS/MMS gateways (AT&T, T-Mobile, Verizon)
+            # silently drop messages with an empty Subject line.  Use the alert
+            # label (already a short string) so the gateway has a non-empty subject.
+            per_msg['Subject'] = alert_context.get('label', 'Fuel Alert')
+            per_msg['From']    = GMAIL_USER
+            per_msg['To']      = phone
+            srv.sendmail(GMAIL_USER, phone, per_msg.as_string())
             print(f"SMS sent to gateway ({mask_recipient(phone)})")
             
         srv.quit()
@@ -1445,18 +1449,18 @@ def send_daily_prompt(now):
     body = "Please reply with today's Graves Oil prices.\nFormat: Unleaded Premium Diesel\n(e.g. 2.10 2.30 2.50)"
     
     try:
-        sms_msg = MIMEText(body)
-        sms_msg['Subject'] = 'Graves Oil Prices Needed'
-        sms_msg['From'] = GMAIL_USER
-        
         srv = smtplib.SMTP('smtp.gmail.com', 587, timeout=30)
         srv.starttls()
         srv.login(GMAIL_USER, GMAIL_APP_PASSWORD)
         
         phones = TO_PHONE_SMS
         for phone in phones:
-            sms_msg.replace_header('To', phone) if 'To' in sms_msg else sms_msg.add_header('To', phone)
-            srv.sendmail(GMAIL_USER, phone, sms_msg.as_string())
+            # Construct a fresh MIMEText per recipient — never mutate a shared object.
+            per_msg = MIMEText(body)
+            per_msg['Subject'] = 'Graves Oil Prices Needed'
+            per_msg['From']    = GMAIL_USER
+            per_msg['To']      = phone
+            srv.sendmail(GMAIL_USER, phone, per_msg.as_string())
             print(f"Daily prompt sent to {mask_recipient(phone)}")
             
         srv.quit()
