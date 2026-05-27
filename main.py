@@ -655,11 +655,17 @@ def attach_rack_signals(all_data, now):
 def append_price(history, ts, price):
     session_start = get_session_start(ts)
     filtered = []
+    ts_iso = ts.isoformat()
+    ts_exists = False
     for h in history:
         h_dt = datetime.fromisoformat(h['t'])
         if h_dt >= session_start:
+            if h['t'] == ts_iso:
+                h['p'] = round(price, 4)
+                ts_exists = True
             filtered.append(h)
-    filtered.append({"t": ts.isoformat(), "p": round(price, 4)})
+    if not ts_exists:
+        filtered.append({"t": ts_iso, "p": round(price, 4)})
     return filtered
 
 def generate_intraday_chart(history, current_price, baseline_price, high_price, low_price, daily_pct, commodity_name):
@@ -1174,6 +1180,17 @@ def build_html_email(subject, all_data, now, alert_context):
             </div>
             '''
 
+    latest_quote_time = now
+    quote_times = []
+    for prefix in ['RB', 'HO']:
+        if prefix in all_data and all_data[prefix].get('quote_time'):
+            quote_times.append(all_data[prefix]['quote_time'])
+    if quote_times:
+        latest_quote_time = max(quote_times)
+    
+    header_time_str = latest_quote_time.astimezone(TZ).strftime('%-I:%M %p CT &nbsp;&middot;&nbsp; %b %-d, %Y')
+    footer_sent_time_str = now.astimezone(TZ).strftime('%-I:%M:%S %p %Z')
+
     html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1190,7 +1207,7 @@ def build_html_email(subject, all_data, now, alert_context):
             <table width="100%" cellpadding="0" cellspacing="0">
               <tr>
                 <td><p style="margin:0;font-size:10px;color:#64748b;letter-spacing:0.1em;text-transform:uppercase;font-weight:600;">Fuel Tracker &nbsp;&middot;&nbsp; NYMEX CME</p></td>
-                <td style="text-align:right;"><p style="margin:0;font-size:10px;color:#94a3b8;">{now.strftime('%-I:%M %p CT &nbsp;&middot;&nbsp; %b %-d, %Y')}</p></td>
+                <td style="text-align:right;"><p style="margin:0;font-size:10px;color:#94a3b8;">{header_time_str}</p></td>
               </tr>
             </table>
           </div>
@@ -1201,7 +1218,7 @@ def build_html_email(subject, all_data, now, alert_context):
           
           <!-- FOOTER -->
           <div style="background:#f1f5f9;border-radius:0 0 10px 10px;padding:10px 20px;border:1px solid #e2e8f0;border-top:none;">
-            <p style="margin:0;font-size:9px;color:#64748b;line-height:1.6;">Automated by armaanmoosani/rbob-ho-fuel-tracker</p>
+            <p style="margin:0;font-size:9px;color:#64748b;line-height:1.6;">Automated by armaanmoosani/rbob-ho-fuel-tracker &nbsp;&middot;&nbsp; Sent at {footer_sent_time_str}</p>
           </div>
         </div>
       </td>
@@ -1225,7 +1242,14 @@ def send_sms(all_data, now, alert_context):
         return
 
     label    = alert_context.get('label', 'Update')
-    time_str = now.strftime('%-I:%M %p CT')
+    latest_quote_time = now
+    quote_times = []
+    for prefix in ['RB', 'HO']:
+        if prefix in all_data and all_data[prefix].get('quote_time'):
+            quote_times.append(all_data[prefix]['quote_time'])
+    if quote_times:
+        latest_quote_time = max(quote_times)
+    time_str = latest_quote_time.astimezone(TZ).strftime('%-I:%M %p CT')
 
     # --- HEARTBEAT / FAILURE: short fixed bodies ---
     if alert_context.get('label') == 'HEARTBEAT':
@@ -1649,47 +1673,58 @@ def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
         cyear, cmonth = add_month(schedule_year, schedule_month, i)
         candidates.append(f"/{prefix}{DELIVERY_MONTH_CODES[cmonth]}{cyear % 100:02d}")
 
-    if not access_token:
-        return candidates[0]
+    if access_token:
+        try:
+            symbols = ",".join(candidates)
+            res = requests.get(
+                "https://api.schwabapi.com/marketdata/v1/quotes",
+                params={"symbols": symbols},
+                headers={"Authorization": f"Bearer {access_token}"},
+                timeout=15
+            )
+            res.raise_for_status()
+            res_json = res.json()
 
+            best_symbol = None
+            best_score = (-1, -1.0, float('inf'))
+            for idx, symbol in enumerate(candidates):
+                quote_entry = None
+                if symbol in res_json:
+                    quote_entry = res_json[symbol].get('quote', {})
+                elif isinstance(res_json, dict):
+                    quote_entry = next(
+                        (item.get('quote') for item in res_json.values() if isinstance(item, dict) and item.get('quote', {}).get('symbol') == symbol),
+                        None
+                    )
+                if not quote_entry:
+                    continue
+                current_price = quote_float(quote_entry, 'lastPrice', 'mark', 'bidPrice', 'askPrice')
+                if current_price is None:
+                    continue
+                score = float(quote_activity(quote_entry))
+                candidate_score = (1, score, -idx)
+                if candidate_score > best_score:
+                    best_score = candidate_score
+                    best_symbol = symbol
+
+            if best_symbol:
+                print(f"[{prefix}] Resolved active Schwab symbol from live quotes: {best_symbol}")
+                return best_symbol
+        except Exception as exc:
+            print(f"[{prefix}] Active Schwab symbol resolution failed: {exc}. Trying yfinance fallback.")
+
+    # Try resolving symbol using yfinance underlyingSymbol fallback
     try:
-        symbols = ",".join(candidates)
-        res = requests.get(
-            "https://api.schwabapi.com/marketdata/v1/quotes",
-            params={"symbols": symbols},
-            headers={"Authorization": f"Bearer {access_token}"},
-            timeout=15
-        )
-        res.raise_for_status()
-        res_json = res.json()
-
-        best_symbol = None
-        best_score = (-1, -1.0, float('inf'))
-        for idx, symbol in enumerate(candidates):
-            quote_entry = None
-            if symbol in res_json:
-                quote_entry = res_json[symbol].get('quote', {})
-            elif isinstance(res_json, dict):
-                quote_entry = next(
-                    (item.get('quote') for item in res_json.values() if isinstance(item, dict) and item.get('quote', {}).get('symbol') == symbol),
-                    None
-                )
-            if not quote_entry:
-                continue
-            current_price = quote_float(quote_entry, 'lastPrice', 'mark', 'bidPrice', 'askPrice')
-            if current_price is None:
-                continue
-            score = float(quote_activity(quote_entry))
-            candidate_score = (1, score, -idx)
-            if candidate_score > best_score:
-                best_score = candidate_score
-                best_symbol = symbol
-
-        if best_symbol:
-            print(f"[{prefix}] Resolved active Schwab symbol from live quotes: {best_symbol}")
-            return best_symbol
-    except Exception as exc:
-        print(f"[{prefix}] Active Schwab symbol resolution failed: {exc}. Falling back to calendar-based front-month.")
+        yf_symbol = "RB=F" if prefix == "RB" else "HO=F"
+        yf_ticker = yf.Ticker(yf_symbol)
+        underlying = yf_ticker.info.get('underlyingSymbol')
+        if underlying:
+            resolved_symbol = '/' + underlying.split('.')[0]
+            if resolved_symbol.startswith(f"/{prefix}"):
+                print(f"[{prefix}] Resolved active Schwab symbol from yfinance underlyingSymbol: {resolved_symbol}")
+                return resolved_symbol
+    except Exception as yf_err:
+        print(f"[{prefix}] Failed to resolve active symbol from yf.Ticker underlyingSymbol: {yf_err}")
 
     return candidates[0]
 
@@ -1729,11 +1764,14 @@ def fetch_commodity(prefix, cfg, now, access_token):
             open_ = float(hist['Open'].iloc[0])
             high_ = float(hist['High'].max())
             low_ = float(hist['Low'].min())
+            quote_time_val = hist.index[-1].to_pydatetime().astimezone(TZ)
         else:
             open_ = current
             high_ = low_ = 0.0
-        return current, open_, high_, low_
+            quote_time_val = now
+        return current, open_, high_, low_, quote_time_val
 
+    quote_time = now
     try:
         res = requests.get(
             "https://api.schwabapi.com/marketdata/v1/quotes",
@@ -1755,6 +1793,13 @@ def fetch_commodity(prefix, cfg, now, access_token):
         schwab_close  = quote_float(quote, 'closePrice') or 0.0
         if not current_price:
             raise RuntimeError(f"Schwab quote for {schwab_symbol} did not include a usable price")
+        
+        quote_time_ms = quote.get('quoteTime')
+        if quote_time_ms:
+            quote_time = datetime.fromtimestamp(quote_time_ms / 1000.0, pytz.utc).astimezone(TZ)
+        else:
+            quote_time = now
+            
         data_source   = 'schwab'
         print(f"[{prefix}] Schwab success")
     except Exception as e:
@@ -1768,7 +1813,7 @@ def fetch_commodity(prefix, cfg, now, access_token):
                 last_err = None
                 for yf_symbol in yf_symbols:
                     try:
-                        current_price, open_price, high_price, low_price = fetch_yfinance_quote(yf_symbol)
+                        current_price, open_price, high_price, low_price, quote_time = fetch_yfinance_quote(yf_symbol)
                         dynamic_yf_symbol = yf_symbol
                         break
                     except Exception as yf_symbol_err:
@@ -1790,10 +1835,40 @@ def fetch_commodity(prefix, cfg, now, access_token):
         
     if not open_price: open_price = current_price
     
-    yesterday_close = five_day_high = five_day_low = thirty_day_avg = sma_3 = sma_10 = None
-    if data_source == 'schwab' and schwab_close > 0:
+    session_date_str = get_session_date_str(now)
+    session_date = datetime.fromisoformat(session_date_str).date()
+    
+    yesterday_close = None
+    # Prioritize graves_history.csv daily settlements for yesterday_close
+    try:
+        col_idx = 1 if prefix == "RB" else 2
+        csv_file_path = os.path.join(DATA_DIR, "graves_history.csv")
+        if os.path.exists(csv_file_path):
+            best_date = None
+            with open(csv_file_path, "r") as f:
+                reader = csv.reader(f)
+                header = next(reader, None) # skip header
+                for row in reader:
+                    if len(row) > col_idx:
+                        row_date_str = row[0].strip()
+                        if row_date_str:
+                            try:
+                                row_date = datetime.fromisoformat(row_date_str).date()
+                                if row_date < session_date:
+                                    yesterday_close = float(row[col_idx].strip())
+                                    best_date = row_date
+                            except (ValueError, IndexError):
+                                pass
+            if yesterday_close is not None:
+                print(f"[{prefix}] Prioritized yesterday_close from local CSV (date: {best_date}): {yesterday_close}")
+    except Exception as e:
+        print(f"[{prefix}] Failed to read yesterday_close from CSV: {e}")
+
+    # Fallback to Schwab close price if CSV not found/empty
+    if yesterday_close is None and data_source == 'schwab' and schwab_close > 0:
         yesterday_close = schwab_close
         
+    five_day_high = five_day_low = thirty_day_avg = sma_3 = sma_10 = None
     history_5d = []
     try:
         yf_t = yf.Ticker(dynamic_yf_symbol)
@@ -1808,15 +1883,12 @@ def fetch_commodity(prefix, cfg, now, access_token):
             five_day_high = float(h5d['High'].max())
             five_day_low  = float(h5d['Low'].min())
         if not h30d.empty:
-            session_date_str = get_session_date_str(now)
-            session_date = datetime.fromisoformat(session_date_str).date()
             prev_daily = h30d[[d.date() < session_date for d in h30d.index.to_pydatetime()]]
             if not prev_daily.empty:
                 last_daily_date = prev_daily.index[-1].date()
                 target_prev_day = previous_nymex_business_day(session_date)
                 if last_daily_date < target_prev_day:
                     print(f"[{prefix}] Warning: yfinance daily close history is stale (last available: {last_daily_date}, expected: {target_prev_day}). Bypassing yfinance close price.")
-                    yesterday_close = None
                 elif yesterday_close is None:
                     yesterday_close = float(prev_daily['Close'].iloc[-1])
                 
@@ -1829,25 +1901,6 @@ def fetch_commodity(prefix, cfg, now, access_token):
     except Exception:
         pass
 
-    if yesterday_close is None:
-        try:
-            col_idx = 1 if "RB" in dynamic_yf_symbol else 2
-            csv_file_path = os.path.join(DATA_DIR, "graves_history.csv")
-            if os.path.exists(csv_file_path):
-                with open(csv_file_path, "r") as f:
-                    for line in f:
-                        parts = line.strip().split(',')
-                        if len(parts) > col_idx:
-                            val_str = parts[col_idx].strip()
-                            if val_str:
-                                try:
-                                    yesterday_close = float(val_str)
-                                except ValueError:
-                                    pass
-            print(f"[{prefix}] yfinance failed. Fell back to local CSV for baseline: {yesterday_close}")
-        except Exception as e:
-            print(f"[{prefix}] CSV fallback also failed: {e}")
-
     baseline_price = yesterday_close if yesterday_close else open_price
     daily_pct = ((current_price - baseline_price) / baseline_price) * 100
 
@@ -1857,7 +1910,7 @@ def fetch_commodity(prefix, cfg, now, access_token):
     else:
         history_key = contract_state_prefix(prefix, schwab_symbol)
         history_intra = load_price_history(history_key)
-        history_intra = append_price(history_intra, now, current_price)
+        history_intra = append_price(history_intra, quote_time, current_price)
         save_price_history(history_intra, history_key)
         chart_intra = generate_intraday_chart(history_intra, current_price, baseline_price, high_price, low_price, daily_pct, cfg['name'])
         chart_5d = generate_5day_chart(history_5d, current_price)
@@ -1879,7 +1932,8 @@ def fetch_commodity(prefix, cfg, now, access_token):
         'chart_intraday_b64': chart_intra,
         'chart_5d_b64': chart_5d,
         'schwab_symbol': schwab_symbol,
-        'yfinance_symbol': dynamic_yf_symbol
+        'yfinance_symbol': dynamic_yf_symbol,
+        'quote_time': quote_time
     }
 
 

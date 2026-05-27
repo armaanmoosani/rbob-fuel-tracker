@@ -306,6 +306,25 @@ def get_github_settlement_snapshots(target_date_str):
     return None
 
 
+def ensure_trailing_newline(file_path):
+    if not os.path.exists(file_path):
+        return
+    try:
+        with open(file_path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            size = f.tell()
+            if size == 0:
+                return
+            f.seek(size - 1)
+            last_byte = f.read(1)
+        if last_byte != b'\n':
+            print(f"File {file_path} is missing a trailing newline. Appending one...")
+            with open(file_path, "ab") as f:
+                f.write(b'\n')
+    except Exception as e:
+        print(f"Warning: Failed to ensure trailing newline for {file_path}: {e}")
+
+
 def main():
     print("Starting SMS ingest...")
     git_pull_rebase()
@@ -436,6 +455,8 @@ def main():
             print(f"Prices for {date_str} were already ingested by a concurrent run. Exiting silently.")
             sys.exit(0)
             
+        # Ensure trailing newline exists in CSV before appending
+        ensure_trailing_newline(CSV_PATH)
         # Write to CSV
         with open(CSV_PATH, "a", newline="") as f:
             writer = csv.writer(f)
