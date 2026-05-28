@@ -1791,7 +1791,7 @@ def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
 
     # Try resolving symbol using yfinance underlyingSymbol fallback
     try:
-        yf_symbol = "RB=F" if prefix == "RB" else "HO=F"
+        yf_symbol = "RB=F" if prefix == "RB" else "HO=F" if prefix == "HO" else "CL=F"
         yf_ticker = yf.Ticker(yf_symbol, session=_YF_SESSION)
         underlying = yf_ticker.info.get('underlyingSymbol')
         if underlying:
