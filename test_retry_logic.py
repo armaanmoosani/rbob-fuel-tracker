@@ -154,23 +154,22 @@ class TestRetryAndTargetDateLogic(unittest.TestCase):
         mock_check.assert_not_called()
 
     @patch('ingest_prices.imaplib.IMAP4_SSL')
-    def test_check_inbox_for_prices_2026_05_27_swap_exception(self, mock_imap_ssl):
-        # Mock IMAP connection and message
+    def test_check_inbox_label_parser_correct_assignment(self, mock_imap_ssl):
+        """Label-anchored parser must assign rack_p=E10-PREMIUM and rack_d=CLEAR DIESEL
+        regardless of the order they appear in the email body."""
         mock_conn = MagicMock()
         mock_imap_ssl.return_value = mock_conn
-        
         mock_conn.search.return_value = ("OK", [b"1"])
         mock_conn.fetch.return_value = ("OK", [(None, b"")])
-        
-        # Build mock email message
-        # Format the email body so it has the switched values:
-        # Unleaded=3.017, Premium=3.8373, Diesel=3.7414
+
+        # Email body with items in Graves Oil invoice order:
+        # UNLEADED first, CLEAR DIESEL second, E10-PREMIUM last.
         email_body = (
             "11 E10 - UNLEADED 3.01700\n"
-            "13 E10 - PREMIUM 3.83730\n"
             "4 CLEAR DIESEL 3.74140\n"
+            "13 E10 - PREMIUM 3.83730\n"
         )
-        
+
         mock_msg = MagicMock()
         mock_msg.is_multipart.return_value = False
         mock_msg.get_payload = lambda decode=False: email_body.encode('utf-8') if decode else email_body
@@ -178,18 +177,15 @@ class TestRetryAndTargetDateLogic(unittest.TestCase):
         mock_msg.get.side_effect = lambda key: {
             'From': 'donotreply@gravesoil.com',
             'Subject': 'Latest prices from Graves Oil Company',
-            'Date': 'Wed, 27 May 2026 18:24:00 -0500'
+            'Date': 'Tue, 27 May 2026 18:24:00 -0500'
         }.get(key)
-        
+
         with patch('email.message_from_bytes', return_value=mock_msg):
             date_str, prices = ingest_prices.check_inbox_for_prices("2026-05-27")
-            
-            # Verify that the prices were sorted:
-            # Unleaded should be 3.017 (smallest)
-            # Premium should be 3.7414 (second/middle)
-            # Diesel should be 3.8373 (largest)
-            self.assertEqual(date_str, "2026-05-27")
-            self.assertEqual(prices, (3.017, 3.7414, 3.8373))
+
+        # Label parser: rack_u=UNLEADED, rack_p=PREMIUM, rack_d=DIESEL
+        self.assertEqual(date_str, "2026-05-27")
+        self.assertEqual(prices, (3.017, 3.8373, 3.7414))
 
 if __name__ == "__main__":
     unittest.main()

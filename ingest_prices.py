@@ -246,16 +246,6 @@ def check_inbox_for_prices(target_date_str):
                     rack_u = prices['rack_u']
                     rack_p = prices['rack_p']
                     rack_d = prices['rack_d']
-                    
-                    # Swap exception check: if on 2026-05-27 the parsed prices are found,
-                    # sort them so Unleaded is smallest, Premium is second, and Diesel is largest.
-                    if local_date_str == "2026-05-27":
-                        sorted_vals = sorted([rack_u, rack_p, rack_d])
-                        rack_u = sorted_vals[0]
-                        rack_p = sorted_vals[1]
-                        rack_d = sorted_vals[2]
-                        print(f"Applying 2026-05-27 sorting fix: Unleaded={rack_u}, Premium={rack_p}, Diesel={rack_d}")
-                        
                     print(f"Parsed prices from email: Unleaded={rack_u}, Premium={rack_p}, Diesel={rack_d}")
                     return local_date_str, (rack_u, rack_p, rack_d)
 
