@@ -1636,9 +1636,20 @@ def main():
         })
 
     if local_now.hour in [8, 12, 18]:
+        # Build a compact live-price summary for the action line
+        price_parts = []
+        for prefix, name in [('RB', 'RBOB'), ('HO', 'Heating Oil')]:
+            if prefix in all_data:
+                d = all_data[prefix]
+                cp = d.get('current_price')
+                pct = d.get('daily_pct_change')
+                if cp is not None:
+                    pct_str = f" ({'+' if pct >= 0 else ''}{pct:.2f}%)" if pct is not None else ""
+                    price_parts.append(f"{name}: ${cp:.4f}{pct_str}")
+        action_text = ('Live prices: ' + ' · '.join(price_parts)) if price_parts else 'Periodic fuel market snapshot.'
         alert_ctx = {
             'label': f'Scheduled Market Update — {local_now.strftime("%-I:%M %p CT")}',
-            'action': 'Periodic fuel market snapshot.',
+            'action': action_text,
             'action_color': '#475569'
         }
         if local_now.hour == 8:
