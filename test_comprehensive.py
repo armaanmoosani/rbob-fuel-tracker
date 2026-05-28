@@ -1783,6 +1783,10 @@ class TestCategory13LiveValidationAndRobustness(unittest.TestCase):
         long_body = "E10 - UNLEADED " + ("x" * 65) + " $2.10"
         self.assertIsNone(ingest_prices.extract_price_near_label(long_body, "E10 - UNLEADED"))
 
+        # 4. Match should handle non-breaking spaces (\xa0) and tabs
+        body_with_nbsp_and_tabs = "11\tE10\xa0-\xa0UNLEADED\t3.01700\t0.46152\t3.47852"
+        self.assertEqual(ingest_prices.extract_price_near_label(body_with_nbsp_and_tabs, "E10 - UNLEADED"), 3.01700)
+
     @patch('ingest_prices.imaplib.IMAP4_SSL')
     def test_13_6_imap_retry_logic(self, mock_imap_ssl):
         from unittest.mock import call

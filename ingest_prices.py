@@ -126,14 +126,16 @@ LABELS = {
 
 def extract_price_near_label(text, label):
     """Find label in text; return the first price number within 60 chars AFTER it on the same line only."""
-    lines = text.splitlines()
+    # Collapses all forms of whitespace (including \xa0 and tabs) to standard spaces
+    normalized_label = re.sub(r'\s+', ' ', label).lower()
     price_pattern = re.compile(r'\$?(\d+\.\d{2,5})')
-    label_lower = label.lower()
-    for line in lines:
-        pos = line.lower().find(label_lower)
+    
+    for line in text.splitlines():
+        normalized_line = re.sub(r'\s+', ' ', line)
+        pos = normalized_line.lower().find(normalized_label)
         if pos != -1:
             # Search only within 60 characters AFTER the label on this line
-            after_label = line[pos + len(label): pos + len(label) + 60]
+            after_label = normalized_line[pos + len(normalized_label): pos + len(normalized_label) + 60]
             m = price_pattern.search(after_label)
             if m:
                 return float(m.group(1))
@@ -368,10 +370,9 @@ def main():
         # Determine retry vs. warning behavior
         current_hour = now_local.hour
         is_final_check = (current_hour == 0) or (current_hour < 4)
-        is_manual = os.environ.get('GITHUB_EVENT_NAME') == 'workflow_dispatch'
         
         print(f"No valid price email found for {target_date_str}.")
-        if is_final_check or is_manual:
+        if is_final_check:
             send_alert_email(
                 "WARNING: Graves Oil Prices Missing",
                 f"No Graves Oil prices received today for {target_date_str} by midnight. Please check Graves Oil email/website manually."
