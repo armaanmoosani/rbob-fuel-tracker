@@ -246,13 +246,25 @@ def set_repo_variable(name, value):
     res.raise_for_status()
 
 def update_github_secret(new_refresh_token):
+    import time
     from nacl import encoding, public
     url_key = f"https://api.github.com/repos/{GH_REPO}/actions/secrets/public-key"
-    res_key = requests.get(url_key, headers=GH_HEADERS, timeout=REQUEST_TIMEOUT)
-    res_key.raise_for_status()
-    key_data = res_key.json()
-    public_key = key_data['key']
-    key_id = key_data['key_id']
+    
+    # Retry loop for public key retrieval
+    public_key = None
+    key_id = None
+    for attempt in range(5):
+        try:
+            res_key = requests.get(url_key, headers=GH_HEADERS, timeout=REQUEST_TIMEOUT)
+            res_key.raise_for_status()
+            key_data = res_key.json()
+            public_key = key_data['key']
+            key_id = key_data['key_id']
+            break
+        except Exception as e:
+            if attempt == 4:
+                raise RuntimeError(f"Failed to retrieve GitHub repository public key after 5 attempts: {e}")
+            time.sleep(2 ** attempt)
 
     public_key_obj = public.PublicKey(public_key.encode("utf-8"), encoding.Base64Encoder)
     sealed_box = public.SealedBox(public_key_obj)
@@ -260,13 +272,22 @@ def update_github_secret(new_refresh_token):
     encrypted_b64 = base64.b64encode(encrypted).decode("utf-8")
 
     url_secret = f"https://api.github.com/repos/{GH_REPO}/actions/secrets/SCHWAB_REFRESH_TOKEN"
-    res_secret = requests.put(
-        url_secret,
-        headers=GH_HEADERS,
-        json={"encrypted_value": encrypted_b64, "key_id": key_id},
-        timeout=REQUEST_TIMEOUT
-    )
-    res_secret.raise_for_status()
+    
+    # Retry loop for writing the secret
+    for attempt in range(5):
+        try:
+            res_secret = requests.put(
+                url_secret,
+                headers=GH_HEADERS,
+                json={"encrypted_value": encrypted_b64, "key_id": key_id},
+                timeout=REQUEST_TIMEOUT
+            )
+            res_secret.raise_for_status()
+            break
+        except Exception as e:
+            if attempt == 4:
+                raise RuntimeError(f"Failed to write rotated Schwab refresh token to GitHub Secrets after 5 attempts: {e}")
+            time.sleep(2 ** attempt)
 
 def load_price_history(prefix):
     raw = get_repo_variable(f"{prefix}_PRICE_HISTORY")
@@ -1536,15 +1557,16 @@ def main():
             access_token = auth_json['access_token']
             new_refresh = auth_json.get('refresh_token')
             print("Schwab OAuth refreshed")
-            
-            if new_refresh and new_refresh != SCHWAB_REFRESH_TOKEN:
-                try:
-                    update_github_secret(new_refresh)
-                    print("Schwab refresh token rotated in GitHub Secrets")
-                except Exception as e:
-                    print(f"Warning: GitHub secret update failed: {mask_sensitive_text(e)}")
         except Exception as e:
             print(f"Schwab OAuth refresh failed: {mask_sensitive_text(e)}. Bypassing Schwab and forcing Yahoo Finance fallback.")
+            new_refresh = None
+
+        if new_refresh and new_refresh != SCHWAB_REFRESH_TOKEN:
+            try:
+                update_github_secret(new_refresh)
+                print("Schwab refresh token rotated in GitHub Secrets")
+            except Exception as e:
+                raise RuntimeError(f"CRITICAL: Schwab token refresh succeeded but updating GitHub Secrets failed: {mask_sensitive_text(e)}")
 
     all_data = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(COMMODITIES)) as executor:
