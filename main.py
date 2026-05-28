@@ -1746,7 +1746,18 @@ def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
     def quote_activity(quote):
         return quote_float(quote, 'volume', 'volumeDay', 'totalVolume', 'openInterest') or 0.0
 
-    schedule_year, schedule_month, _ = get_front_month_contract(now, prefix)
+    # Use the CME Globex session date (not raw calendar date) for contract resolution.
+    # After 5 PM CT, the session has already rolled to the next calendar day, so
+    # get_session_date_str correctly returns tomorrow's date for post-5PM runs.
+    session_date_str = get_session_date_str(now)
+    from datetime import date as _date_type
+    session_date = _date_type.fromisoformat(session_date_str)
+    schedule_year, schedule_month, front_ltd = get_front_month_contract(session_date, prefix)
+    # If the session date has reached the front-month LTD, that contract expires
+    # during this session — advance to the next contract for the candidate list.
+    if session_date >= front_ltd:
+        print(f"[{prefix}] Session date {session_date} >= LTD {front_ltd}: advancing candidates to next contract")
+        schedule_year, schedule_month = add_month(schedule_year, schedule_month, 1)
     candidates = []
     for i in range(candidate_months):
         cyear, cmonth = add_month(schedule_year, schedule_month, i)
@@ -1812,13 +1823,27 @@ def fetch_commodity(prefix, cfg, now, access_token):
     cache_key = f"ACTIVE_SYMBOL_{prefix}_{session_str}"
     
     cached_symbol = state.get(cache_key)
-    on_roll_day = is_contract_roll_day(now, prefix) if prefix in ('RB', 'HO', 'CL') else False
+    # Check if it is a contract roll day using both the raw calendar date AND the
+    # CME session date.  After 5 PM CT, the session date is tomorrow; if that
+    # session date equals the front-month LTD the contract expires this session.
+    on_roll_day = False
+    if prefix in ('RB', 'HO', 'CL'):
+        on_roll_day = is_contract_roll_day(now, prefix)
+        if not on_roll_day:
+            try:
+                from datetime import date as _date_type
+                _session_date = _date_type.fromisoformat(session_str)
+                _, _, _front_ltd = get_front_month_contract(_session_date, prefix)
+                if _session_date >= _front_ltd:
+                    on_roll_day = True
+            except Exception:
+                pass
     if cached_symbol and not on_roll_day:
         schwab_symbol = cached_symbol
         print(f"[{prefix}] Using cached active symbol for session {session_str}: {schwab_symbol}")
     else:
         if on_roll_day:
-            print(f"[{prefix}] Roll day — bypassing stale session cache and re-resolving by live Schwab volume.")
+            print(f"[{prefix}] Session roll day — bypassing stale cache and re-resolving by live Schwab volume.")
         schwab_symbol = resolve_active_schwab_symbol(prefix, now, access_token)
         state[cache_key] = schwab_symbol
         try:
