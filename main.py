@@ -25,6 +25,12 @@ try:
 except ImportError:
     mcal = None
 
+_YF_SESSION = requests.Session()
+_YF_SESSION.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+})
+
+
 SCHWAB_APP_KEY       = os.environ.get('SCHWAB_APP_KEY', '')
 SCHWAB_APP_SECRET    = os.environ.get('SCHWAB_APP_SECRET', '')
 SCHWAB_REFRESH_TOKEN = os.environ.get('SCHWAB_REFRESH_TOKEN', '')
@@ -1549,6 +1555,8 @@ def main():
                 all_data[res.pop('prefix')] = res
 
     session_str = get_session_date_str(now)
+    if 'RB' not in all_data and 'HO' not in all_data:
+        raise RuntimeError("CRITICAL ERROR: Failed to fetch pricing data for both RBOB (Unleaded) and Heating Oil (Diesel) from all available sources.")
     save_settlement_snapshots(all_data, now)
     
     any_swing = False
@@ -1762,7 +1770,7 @@ def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
     # Try resolving symbol using yfinance underlyingSymbol fallback
     try:
         yf_symbol = "RB=F" if prefix == "RB" else "HO=F"
-        yf_ticker = yf.Ticker(yf_symbol)
+        yf_ticker = yf.Ticker(yf_symbol, session=_YF_SESSION)
         underlying = yf_ticker.info.get('underlyingSymbol')
         if underlying:
             resolved_symbol = '/' + underlying.split('.')[0]
@@ -1813,7 +1821,7 @@ def fetch_commodity(prefix, cfg, now, access_token):
         return None
 
     def fetch_yfinance_quote(symbol):
-        yf_t = yf.Ticker(symbol)
+        yf_t = yf.Ticker(symbol, session=_YF_SESSION)
         try:
             current = float(yf_t.fast_info['last_price'])
         except Exception:
@@ -1950,7 +1958,7 @@ def fetch_commodity(prefix, cfg, now, access_token):
         yesterday_close = schwab_close
         
     try:
-        yf_t = yf.Ticker(dynamic_yf_symbol)
+        yf_t = yf.Ticker(dynamic_yf_symbol, session=_YF_SESSION)
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
             fut_5d = executor.submit(yf_t.history, period='5d', interval='1h')
             fut_30d = executor.submit(yf_t.history, period='1mo', interval='1d')
