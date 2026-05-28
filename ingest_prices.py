@@ -226,10 +226,13 @@ def check_inbox_for_prices(target_date_str):
                 else:
                     payload = msg.get_payload(decode=True)
                     if payload:
-                        body = payload.decode('utf-8', errors='ignore')
+                        body_decoded = payload.decode('utf-8', errors='ignore')
+                        if msg.get_content_type() == 'text/html':
+                            body = BeautifulSoup(body_decoded, "html.parser").get_text(separator=" ")
+                        else:
+                            body = body_decoded
 
                 # Primary extraction: labels near known markers
-                print(f"DEBUG raw email body: {repr(body)}")
                 prices = {}
                 for key, label in LABELS.items():
                     p = extract_price_near_label(body, label)
