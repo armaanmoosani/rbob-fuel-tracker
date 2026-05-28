@@ -229,6 +229,7 @@ def check_inbox_for_prices(target_date_str):
                         body = payload.decode('utf-8', errors='ignore')
 
                 # Primary extraction: labels near known markers
+                print(f"DEBUG raw email body: {repr(body)}")
                 prices = {}
                 for key, label in LABELS.items():
                     p = extract_price_near_label(body, label)
