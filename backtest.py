@@ -94,19 +94,21 @@ def get_clean_deltas(df, nymex_col, rack_col):
     """
     Cleans and computes the daily price changes in cents.
     """
-    if 'delta_nymex' not in df.columns or 'delta_rack' not in df.columns:
-        df = df.copy()
-        df['delta_nymex'] = df[nymex_col].diff() * 100
-        df['delta_rack'] = df[rack_col].diff() * 100
-
-    df_clean = df.dropna(subset=[nymex_col, rack_col, 'delta_nymex', 'delta_rack']).copy()
-    
-    if not pd.api.types.is_datetime64_any_dtype(df_clean.get('date', pd.Series(dtype='object'))):
+    df = df.copy()
+    if not pd.api.types.is_datetime64_any_dtype(df.get('date', pd.Series(dtype='object'))):
         try:
-            df_clean['date'] = pd.to_datetime(df_clean['date'])
+            df['date'] = pd.to_datetime(df['date'])
         except Exception:
             pass
 
+    # Drop weekends (dayofweek >= 5) first to avoid NaN diffs on Mondays (Issue 1.2)
+    if 'date' in df.columns and pd.api.types.is_datetime64_any_dtype(df['date']):
+        df = df[df['date'].dt.dayofweek < 5].reset_index(drop=True)
+
+    df['delta_nymex'] = df[nymex_col].diff() * 100
+    df['delta_rack'] = df[rack_col].diff() * 100
+
+    df_clean = df.dropna(subset=[nymex_col, rack_col, 'delta_nymex', 'delta_rack']).copy()
     return df_clean['delta_nymex'], df_clean['delta_rack']
 
 def train_thresholds(delta_nymex, delta_rack, Hp, Dp, clamp_bounds=None):
@@ -423,6 +425,8 @@ def main():
 
     df = pd.read_csv(CSV_PATH)
     df['date'] = pd.to_datetime(df['date'])
+    # Filter out weekend rows first to avoid Monday diff data loss (Issue 1.2)
+    df = df[df['date'].dt.dayofweek < 5].reset_index(drop=True)
     df = df.sort_values('date').reset_index(drop=True)
 
     min_rows = cfg.get("MIN_ROWS_FOR_TUNING", 30)

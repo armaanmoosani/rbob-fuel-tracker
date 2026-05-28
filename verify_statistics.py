@@ -127,6 +127,8 @@ def main():
 
     df = pd.read_csv(CSV_PATH)
     df['date'] = pd.to_datetime(df['date'])
+    # Filter out weekend rows first to avoid Monday diff data loss (Issue 1.2)
+    df = df[df['date'].dt.dayofweek < 5].reset_index(drop=True)
 
     # ─── 1. FROZEN HOLDOUT & LEAKAGE TEST ─────────────────────────────────────
     print("\n--- 1. Frozen Holdout & Future Leakage Test ---")
