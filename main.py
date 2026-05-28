@@ -1763,6 +1763,29 @@ def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
         cyear, cmonth = add_month(schedule_year, schedule_month, i)
         candidates.append(f"/{prefix}{DELIVERY_MONTH_CODES[cmonth]}{cyear % 100:02d}")
 
+    # ── Resolution strategy ──────────────────────────────────────────────────
+    # 1. PRIMARY: yfinance underlyingSymbol  (tracks market-convention roll;
+    #    matches what thinkorswim and Yahoo Finance show as the front month,
+    #    which typically occurs 3–5 weeks before the mathematical LTD).
+    # 2. FALLBACK: Schwab live-quote volume  (pick the candidate with the
+    #    highest real-time activity; used when yfinance is unavailable).
+    # 3. LAST RESORT: candidates[0]  (first contract in our session-adjusted
+    #    candidate list).
+
+    # 1. Try yfinance underlyingSymbol first
+    try:
+        yf_symbol = "RB=F" if prefix == "RB" else "HO=F" if prefix == "HO" else "CL=F"
+        yf_ticker = yf.Ticker(yf_symbol, session=_YF_SESSION)
+        underlying = yf_ticker.info.get('underlyingSymbol')
+        if underlying:
+            resolved_symbol = '/' + underlying.split('.')[0]
+            if resolved_symbol.startswith(f"/{prefix}"):
+                print(f"[{prefix}] Resolved active Schwab symbol from yfinance underlyingSymbol (primary): {resolved_symbol}")
+                return resolved_symbol
+    except Exception as yf_err:
+        print(f"[{prefix}] yfinance underlyingSymbol lookup failed: {yf_err}. Falling back to Schwab volume.")
+
+    # 2. Schwab live-quote volume fallback
     if access_token:
         try:
             symbols = ",".join(candidates)
@@ -1795,23 +1818,10 @@ def resolve_active_schwab_symbol(prefix, now, access_token, candidate_months=4):
                     best_symbol = symbol
 
             if best_symbol:
-                print(f"[{prefix}] Resolved active Schwab symbol from live quotes: {best_symbol}")
+                print(f"[{prefix}] Resolved active Schwab symbol from live quotes (fallback): {best_symbol}")
                 return best_symbol
         except Exception as exc:
-            print(f"[{prefix}] Active Schwab symbol resolution failed: {exc}. Trying yfinance fallback.")
-
-    # Try resolving symbol using yfinance underlyingSymbol fallback
-    try:
-        yf_symbol = "RB=F" if prefix == "RB" else "HO=F" if prefix == "HO" else "CL=F"
-        yf_ticker = yf.Ticker(yf_symbol, session=_YF_SESSION)
-        underlying = yf_ticker.info.get('underlyingSymbol')
-        if underlying:
-            resolved_symbol = '/' + underlying.split('.')[0]
-            if resolved_symbol.startswith(f"/{prefix}"):
-                print(f"[{prefix}] Resolved active Schwab symbol from yfinance underlyingSymbol: {resolved_symbol}")
-                return resolved_symbol
-    except Exception as yf_err:
-        print(f"[{prefix}] Failed to resolve active symbol from yf.Ticker underlyingSymbol: {yf_err}")
+            print(f"[{prefix}] Schwab volume resolution failed: {exc}.")
 
     return candidates[0]
 

@@ -1317,8 +1317,12 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
         # yesterday_close should be overridden to None because cache was stale (last date 2026-05-20 < 2026-05-21) and CSV is empty
         self.assertIsNone(res['yesterday_close'])
 
+    @patch('main.yf.Ticker')
     @patch('main.requests.get')
-    def test_12_5a_active_schwab_symbol_resolution_prefers_high_volume(self, mock_get):
+    def test_12_5a_active_schwab_symbol_resolution_prefers_high_volume(self, mock_get, mock_yf):
+        # Mock yfinance to return no underlyingSymbol so this test exercises
+        # the Schwab-volume fallback path (the path this test was designed for).
+        mock_yf.return_value.info.get.return_value = None
         mock_response = MagicMock()
         mock_response.raise_for_status.return_value = None
         mock_response.json.return_value = {
@@ -1336,9 +1340,13 @@ class TestCategory12ProductionFailureProtection(unittest.TestCase):
 
         self.assertEqual(resolved, '/RBM26')
 
+    @patch('main.yf.Ticker')
     @patch('main.requests.get')
-    def test_12_5a_regression_near_term_on_tie(self, mock_get):
+    def test_12_5a_regression_near_term_on_tie(self, mock_get, mock_yf):
         """Regression test for May 2026 bug: pick nearest contract on activity tie."""
+        # Mock yfinance to return no underlyingSymbol so this test exercises
+        # the Schwab-volume fallback path (the path this test was designed for).
+        mock_yf.return_value.info.get.return_value = None
         # Simulate May 26, 2026 at 5pm: all 4 candidates have zero activity (thin market)
         mock_response = MagicMock()
         mock_response.raise_for_status.return_value = None
