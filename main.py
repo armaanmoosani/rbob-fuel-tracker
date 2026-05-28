@@ -1812,10 +1812,13 @@ def fetch_commodity(prefix, cfg, now, access_token):
     cache_key = f"ACTIVE_SYMBOL_{prefix}_{session_str}"
     
     cached_symbol = state.get(cache_key)
-    if cached_symbol:
+    on_roll_day = is_contract_roll_day(now, prefix) if prefix in ('RB', 'HO', 'CL') else False
+    if cached_symbol and not on_roll_day:
         schwab_symbol = cached_symbol
         print(f"[{prefix}] Using cached active symbol for session {session_str}: {schwab_symbol}")
     else:
+        if on_roll_day:
+            print(f"[{prefix}] Roll day — bypassing stale session cache and re-resolving by live Schwab volume.")
         schwab_symbol = resolve_active_schwab_symbol(prefix, now, access_token)
         state[cache_key] = schwab_symbol
         try:
