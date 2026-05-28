@@ -107,7 +107,13 @@ def git_pull_rebase():
     try:
         subprocess.run(["git", "config", "--global", "user.name", "github-actions[bot]"], check=True)
         subprocess.run(["git", "config", "--global", "user.email", "github-actions[bot]@users.noreply.github.com"], check=True)
+        # Stash any temporary changes (like integrity_hashes updating locally) to ensure a clean pull
+        has_changes = subprocess.run(["git", "diff", "--quiet"], capture_output=True).returncode != 0
+        if has_changes:
+            subprocess.run(["git", "stash"], check=True)
         subprocess.run(["git", "pull", "--rebase"], check=True)
+        if has_changes:
+            subprocess.run(["git", "stash", "pop"], check=True)
     except subprocess.CalledProcessError as e:
         print(f"Git pull failed: {e}")
         sys.exit(1)
