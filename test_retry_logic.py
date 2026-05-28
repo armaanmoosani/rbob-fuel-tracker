@@ -126,9 +126,8 @@ class TestRetryAndTargetDateLogic(unittest.TestCase):
                         ingest_prices.main()
                     mock_exit.assert_called_once_with(0)
                     
-        # Send alert SHOULD be called because GITHUB_EVENT_NAME = workflow_dispatch
-        mock_send_email.assert_called_once()
-        self.assertIn("WARNING: Graves Oil Prices Missing", mock_send_email.call_args[0][0])
+        # Send alert should NOT be called on manual dispatch unless it is midnight
+        mock_send_email.assert_not_called()
 
     @patch('ingest_prices.validate_data.validate_all')
     @patch('ingest_prices.check_inbox_for_prices')
