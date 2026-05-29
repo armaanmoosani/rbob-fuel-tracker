@@ -412,41 +412,76 @@ def main():
             
     if not ds:
         print(f"GitHub variables missing or stale. Attempting Yahoo Finance fallback...")
-        try:
-            import yfinance as yf
-            rb_ticker = yf.Ticker("RB=F")
-            ho_ticker = yf.Ticker("HO=F")
-            rb_hist = rb_ticker.history(period="5d")
-            ho_hist = ho_ticker.history(period="5d")
-            
-            rb_val = None
-            ho_val = None
-            for dt, row in rb_hist.iterrows():
-                if dt.strftime("%Y-%m-%d") == date_str:
-                    rb_val = round(float(row['Close']), 4)
+        import time as _time
+        yf_pairs = [
+            ("RB=F", "HO=F"),
+            ("RBN26.NYM", "HON26.NYM"),
+        ]
+        for attempt in range(3):
+            try:
+                import yfinance as yf
+                rb_val, ho_val = None, None
+                for rb_sym, ho_sym in yf_pairs:
+                    if rb_val is None:
+                        try:
+                            rb_hist = yf.Ticker(rb_sym).history(period="5d")
+                            for dt, row in rb_hist.iterrows():
+                                # Use the date as yfinance provides it (exchange trade date).
+                                # Do NOT tz_convert to CT — NYMEX midnight-UTC bars would
+                                # shift to the previous evening in CT, giving the wrong date.
+                                dt_str = dt.strftime("%Y-%m-%d")
+                                if dt_str == date_str:
+                                    rb_val = round(float(row['Close']), 4)
+                                    break
+                        except Exception as e:
+                            print(f"yfinance {rb_sym} attempt {attempt+1} failed: {e}")
+                    if ho_val is None:
+                        try:
+                            ho_hist = yf.Ticker(ho_sym).history(period="5d")
+                            for dt, row in ho_hist.iterrows():
+                                # Same as RB: use exchange trade date directly.
+                                dt_str = dt.strftime("%Y-%m-%d")
+                                if dt_str == date_str:
+                                    ho_val = round(float(row['Close']), 4)
+                                    break
+                        except Exception as e:
+                            print(f"yfinance {ho_sym} attempt {attempt+1} failed: {e}")
+                    if rb_val is not None and ho_val is not None:
+                        break
+                if rb_val is not None and ho_val is not None:
+                    ds = {
+                        "date": date_str,
+                        "rbob_settlement": rb_val,
+                        "heating_oil_settlement": ho_val,
+                        "source": "yfinance_fallback"
+                    }
+                    print(f"Yahoo Finance fallback success: RB={rb_val}, HO={ho_val}")
                     break
-            for dt, row in ho_hist.iterrows():
-                if dt.strftime("%Y-%m-%d") == date_str:
-                    ho_val = round(float(row['Close']), 4)
-                    break
-                    
-            if rb_val is not None and ho_val is not None:
-                ds = {
-                    "date": date_str,
-                    "rbob_settlement": rb_val,
-                    "heating_oil_settlement": ho_val,
-                    "source": "yfinance_fallback"
-                }
-                print(f"Yahoo Finance fallback success: RB={rb_val}, HO={ho_val}")
-            else:
-                print(f"Could not find matching date {date_str} in Yahoo Finance history.")
-        except Exception as yf_e:
-            print(f"Yahoo Finance fallback failed: {mask_sensitive_text(yf_e)}")
-            
+                else:
+                    print(f"Could not find matching date {date_str} in Yahoo Finance history (attempt {attempt+1}).")
+                    if attempt < 2:
+                        _time.sleep(5 * (attempt + 1))
+            except Exception as yf_e:
+                print(f"Yahoo Finance fallback failed (attempt {attempt+1}): {mask_sensitive_text(yf_e)}")
+                if attempt < 2:
+                    _time.sleep(5 * (attempt + 1))
+
     if not ds:
-        print(f"Missing daily_settlement.json for {date_str} and Yahoo Finance fallback failed.")
-        send_alert_email("Fuel Tracker Error", f"Prices received, but missing 1:30 PM NYMEX settlement for {date_str}.")
-        sys.exit(1)
+        # Settlement data is unavailable but we still have the Graves prices.
+        # Write the row with empty settlement columns and send an informational
+        # alert rather than aborting — losing the Graves prices is worse than
+        # missing settlement for one day.
+        print(f"Warning: could not obtain settlement data for {date_str}. Will write row with empty settlement.")
+        send_alert_email(
+            "Fuel Tracker Warning: Missing Settlement",
+            f"Graves Oil prices were received for {date_str} and saved, but the "
+            f"1:30 PM NYMEX settlement snapshot was unavailable from all sources "
+            f"(daily_settlement.json, GitHub variables, and Yahoo Finance). "
+            f"Settlement columns will be blank for this row. "
+            f"You may need to fill them in manually."
+        )
+        ds = {"date": date_str, "rbob_settlement": "", "heating_oil_settlement": ""}
+
         
     rb_stl = ds.get("rbob_settlement", "")
     ho_stl = ds.get("heating_oil_settlement", "")
