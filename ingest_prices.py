@@ -404,6 +404,23 @@ def get_thinkorswim_settlement(target_date_str):
                 )
                 qres.raise_for_status()
                 qj = qres.json()
+                # Optional debug: print concise Schwab response for RB/HO when enabled
+                if os.environ.get('INGEST_DEBUG'):
+                    try:
+                        print(f"Schwab API response keys: {list(qj.keys())}")
+                        for sym in (rb_sym, ho_sym):
+                            ent = None
+                            if isinstance(qj, dict):
+                                ent = qj.get(sym)
+                                if not ent:
+                                    # try to find nested by symbol
+                                    for v in qj.values():
+                                        if isinstance(v, dict) and v.get('quote', {}).get('symbol') == sym:
+                                            ent = v
+                                            break
+                            print(f"Schwab entry for {sym}: {ent.get('quote') if isinstance(ent, dict) else ent}")
+                    except Exception:
+                        pass
                 def pick_price(entry):
                     q = entry.get('quote', {}) if isinstance(entry, dict) else {}
                     # Prefer explicit settlement/close fields where available.
