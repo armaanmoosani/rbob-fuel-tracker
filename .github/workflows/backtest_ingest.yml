@@ -37,6 +37,9 @@ jobs:
           PHONE_SMS_ADDRESS: ${{ secrets.PHONE_SMS_ADDRESS }}
           GRAVES_EMAIL: ${{ secrets.GRAVES_EMAIL }}
           GRAVES_APP_PASSWORD: ${{ secrets.GRAVES_APP_PASSWORD }}
+          SCHWAB_APP_KEY: ${{ secrets.SCHWAB_APP_KEY }}
+          SCHWAB_APP_SECRET: ${{ secrets.SCHWAB_APP_SECRET }}
+          SCHWAB_REFRESH_TOKEN: ${{ secrets.SCHWAB_REFRESH_TOKEN }}
           # Optional: allow passing settlement snapshots via secrets (env override)
           SETTLE_SNAPSHOT_RB: ${{ secrets.SETTLE_SNAPSHOT_RB }}
           SETTLE_SNAPSHOT_HO: ${{ secrets.SETTLE_SNAPSHOT_HO }}
