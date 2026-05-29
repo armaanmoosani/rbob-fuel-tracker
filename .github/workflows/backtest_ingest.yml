@@ -37,6 +37,12 @@ jobs:
           PHONE_SMS_ADDRESS: ${{ secrets.PHONE_SMS_ADDRESS }}
           GRAVES_EMAIL: ${{ secrets.GRAVES_EMAIL }}
           GRAVES_APP_PASSWORD: ${{ secrets.GRAVES_APP_PASSWORD }}
+          # Optional: allow passing settlement snapshots via secrets (env override)
+          SETTLE_SNAPSHOT_RB: ${{ secrets.SETTLE_SNAPSHOT_RB }}
+          SETTLE_SNAPSHOT_HO: ${{ secrets.SETTLE_SNAPSHOT_HO }}
+          # Optional ThinkOrSwim endpoints/secrets
+          TOS_SETTLEMENT_URL: ${{ secrets.TOS_SETTLEMENT_URL }}
+          TOS_API_KEY: ${{ secrets.TOS_API_KEY }}
           GH_PAT: ${{ secrets.GH_PAT }}
           GH_REPO: ${{ github.repository }}
         run: |

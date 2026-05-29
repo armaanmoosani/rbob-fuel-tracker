@@ -276,6 +276,43 @@ def read_daily_settlement(target_date_str):
 def get_github_settlement_snapshots(target_date_str):
     gh_pat = os.environ.get('GH_PAT')
     gh_repo = os.environ.get('GH_REPO')
+    # First, allow direct env-var overrides (useful for CI secrets or manual runs)
+    # Support either plain numeric values or JSON strings like '{"date":"2026-05-28","price":3.0659}'
+    try:
+        rb_env = os.environ.get('SETTLE_SNAPSHOT_RB')
+        ho_env = os.environ.get('SETTLE_SNAPSHOT_HO')
+        if rb_env and ho_env:
+            def parse_snapshot(env_val):
+                env_val = env_val.strip()
+                # Try parse as JSON
+                try:
+                    parsed = json.loads(env_val)
+                    if isinstance(parsed, dict):
+                        if parsed.get('date') == target_date_str and 'price' in parsed:
+                            return float(parsed['price'])
+                        # support legacy key names
+                        if parsed.get('date') == target_date_str and 'rbob_settlement' in parsed:
+                            return float(parsed['rbob_settlement'])
+                    # If JSON is just a number or string, fall through
+                except Exception:
+                    pass
+                # Try parse as plain float
+                try:
+                    return float(env_val)
+                except Exception:
+                    return None
+
+            rb_val = parse_snapshot(rb_env)
+            ho_val = parse_snapshot(ho_env)
+            if rb_val is not None and ho_val is not None:
+                return {
+                    "date": target_date_str,
+                    "rbob_settlement": rb_val,
+                    "heating_oil_settlement": ho_val,
+                    "source": "env_override"
+                }
+    except Exception as e:
+        print(f"Error parsing SETTLE_SNAPSHOT_* env vars: {e}")
     if not gh_pat or not gh_repo:
         print("GitHub credentials missing from environment. Skipping GitHub variable lookup.")
         return None
@@ -318,6 +355,147 @@ def get_github_settlement_snapshots(target_date_str):
     except Exception as e:
         print(f"Failed to fetch settlement snapshots from GitHub variables: {e}")
         
+    return None
+
+
+def get_thinkorswim_settlement(target_date_str):
+    """Attempt to obtain settlement snapshots from ThinkOrSwim exports.
+    Supports three mechanisms (in order):
+    - `TOS_CSV_PATH` env var pointing to a local CSV with columns date,rbob,ho
+    - `TOS_SETTLEMENT_URL` env var: an HTTP GET that returns JSON with keys
+      `date`, `rbob_settlement`, `heating_oil_settlement`. Optionally use
+      `TOS_API_KEY` as a Bearer token header.
+    - If not configured or fails, returns None.
+    """
+    # 0) Prefer Schwab/ThinkOrSwim API if credentials are available
+    SCHWAB_APP_KEY = os.environ.get('SCHWAB_APP_KEY')
+    SCHWAB_APP_SECRET = os.environ.get('SCHWAB_APP_SECRET')
+    SCHWAB_REFRESH_TOKEN = os.environ.get('SCHWAB_REFRESH_TOKEN')
+    if SCHWAB_APP_KEY and SCHWAB_APP_SECRET and SCHWAB_REFRESH_TOKEN:
+        try:
+            import base64
+            from datetime import datetime as _dt
+            from futures_util import get_front_month_schwab_symbol
+            auth_header = base64.b64encode(f"{SCHWAB_APP_KEY}:{SCHWAB_APP_SECRET}".encode()).decode()
+            token_res = requests.post(
+                "https://api.schwabapi.com/v1/oauth/token",
+                data={"grant_type": "refresh_token", "refresh_token": SCHWAB_REFRESH_TOKEN},
+                headers={"Authorization": f"Basic {auth_header}", "Content-Type": "application/x-www-form-urlencoded"},
+                timeout=10
+            )
+            token_res.raise_for_status()
+            token_json = token_res.json()
+            access_token = token_json.get('access_token')
+            if access_token:
+                # Resolve front-month Schwab symbols for RB and HO using the target date
+                try:
+                    dt_target = _dt.fromisoformat(target_date_str)
+                except Exception:
+                    dt_target = _dt.now()
+                rb_sym = get_front_month_schwab_symbol(dt_target, 'RB')
+                ho_sym = get_front_month_schwab_symbol(dt_target, 'HO')
+                symbols = f"{rb_sym},{ho_sym}"
+                qres = requests.get(
+                    "https://api.schwabapi.com/marketdata/v1/quotes",
+                    params={"symbols": symbols},
+                    headers={"Authorization": f"Bearer {access_token}"},
+                    timeout=10
+                )
+                qres.raise_for_status()
+                qj = qres.json()
+                def pick_price(entry):
+                    q = entry.get('quote', {}) if isinstance(entry, dict) else {}
+                    for k in ('closePrice', 'lastPrice', 'mark', 'midPrice'):
+                        v = q.get(k)
+                        if v not in (None, ''):
+                            try:
+                                return float(v)
+                            except Exception:
+                                continue
+                    return None
+
+                rb_val = None
+                ho_val = None
+                # qj may be a dict keyed by symbol
+                if isinstance(qj, dict):
+                    for k, v in qj.items():
+                        if k == rb_sym and not rb_val:
+                            rb_val = pick_price(v)
+                        if k == ho_sym and not ho_val:
+                            ho_val = pick_price(v)
+                        # also check nested
+                        if not rb_val and isinstance(v, dict) and v.get('quote', {}).get('symbol') == rb_sym:
+                            rb_val = pick_price(v)
+                        if not ho_val and isinstance(v, dict) and v.get('quote', {}).get('symbol') == ho_sym:
+                            ho_val = pick_price(v)
+
+                if rb_val is not None and ho_val is not None:
+                    return {
+                        'date': target_date_str,
+                        'rbob_settlement': round(rb_val, 4),
+                        'heating_oil_settlement': round(ho_val, 4),
+                        'source': 'schwab_api'
+                    }
+        except Exception as e:
+            print(f'ThinkOrSwim/Schwab API fetch failed: {e}')
+
+    # 1) Local CSV path (useful for CI tests or manual overrides)
+    tos_csv = os.environ.get('TOS_CSV_PATH')
+    if tos_csv:
+        try:
+            if os.path.exists(tos_csv):
+                with open(tos_csv, 'r') as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        if row.get('date') == target_date_str:
+                            try:
+                                rb = float(row.get('rbob') or row.get('rbob_settlement') or '')
+                                ho = float(row.get('ho') or row.get('heating_oil_settlement') or '')
+                                return {
+                                    'date': target_date_str,
+                                    'rbob_settlement': rb,
+                                    'heating_oil_settlement': ho,
+                                    'source': 'tos_csv'
+                                }
+                            except Exception:
+                                continue
+        except Exception as e:
+            print(f'TOS CSV parse error: {e}')
+
+    # 2) Remote HTTP endpoint
+    tos_url = os.environ.get('TOS_SETTLEMENT_URL')
+    if tos_url:
+        try:
+            import requests
+            headers = {}
+            tos_key = os.environ.get('TOS_API_KEY')
+            if tos_key:
+                headers['Authorization'] = f'Bearer {tos_key}'
+
+            resp = requests.get(tos_url, params={'date': target_date_str}, headers=headers, timeout=10)
+            if resp.status_code == 200:
+                try:
+                    j = resp.json()
+                    # Accept either top-level keys or nested snapshot
+                    if isinstance(j, dict):
+                        # normalize keys
+                        rb = j.get('rbob_settlement') or j.get('rbob') or j.get('price_rb')
+                        ho = j.get('heating_oil_settlement') or j.get('heating_oil') or j.get('price_ho')
+                        date = j.get('date') or j.get('snapshot_date') or target_date_str
+                        if date == target_date_str and rb is not None and ho is not None:
+                            return {
+                                'date': date,
+                                'rbob_settlement': float(rb),
+                                'heating_oil_settlement': float(ho),
+                                'source': 'tos_http'
+                            }
+                except Exception as je:
+                    print(f'TOS HTTP JSON parse error: {je}')
+            else:
+                print(f'TOS HTTP fetch failed: status {resp.status_code} url={tos_url}')
+        except Exception as e:
+            print(f'Failed to fetch ThinkOrSwim settlement: {e}')
+
     return None
 
 
@@ -412,6 +590,11 @@ def main():
             
     if not ds:
         print(f"GitHub variables missing or stale. Attempting Yahoo Finance fallback...")
+        # Try ThinkOrSwim export/source before yfinance (preferred reliable source)
+        tos_ds = get_thinkorswim_settlement(date_str)
+        if tos_ds:
+            ds = tos_ds
+            print(f"ThinkOrSwim fallback success: RB={ds['rbob_settlement']}, HO={ds['heating_oil_settlement']}")
         import time as _time
         yf_pairs = [
             ("RB=F", "HO=F"),
