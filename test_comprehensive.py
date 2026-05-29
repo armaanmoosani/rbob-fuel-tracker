@@ -316,9 +316,9 @@ class TestCategory3SettlementCapture(unittest.TestCase):
     @patch('ingest_prices.send_alert_email')
     @patch('ingest_prices.read_daily_settlement')
     @patch('ingest_prices.get_github_settlement_snapshots')
-    @patch('yfinance.Ticker')
+    @patch('ingest_prices.get_thinkorswim_settlement')
     @patch('ingest_prices.datetime')
-    def test_3_5_settlement_fallback_chain(self, mock_datetime, mock_yf_ticker, mock_github, mock_read_local, mock_send_email, mock_commit, mock_check_inbox, mock_validate, mock_pull):
+    def test_3_5_settlement_fallback_chain(self, mock_datetime, mock_tos, mock_github, mock_read_local, mock_send_email, mock_commit, mock_check_inbox, mock_validate, mock_pull):
         # 1. Setup datetime to be a Monday night (2026-05-18 20:00 Chicago time)
         tz = pytz.timezone('America/Chicago')
         dt_monday = tz.localize(datetime(2026, 5, 18, 20, 0, 0))
@@ -353,15 +353,14 @@ class TestCategory3SettlementCapture(unittest.TestCase):
             except SystemExit:
                 pass
                 
-            # Verify local was called, but github and yfinance were not
+            # Verify local was called, but github and TOS were not
             mock_read_local.assert_called_with("2026-05-18")
             mock_github.assert_not_called()
-            mock_yf_ticker.assert_not_called()
+            mock_tos.assert_not_called()
             
             # --- Scenario 2: Local missing/stale, GitHub matches ---
             mock_read_local.reset_mock()
             mock_github.reset_mock()
-            mock_yf_ticker.reset_mock()
             
             # Clear CSV so it doesn't complain about duplicates
             with open(ingest_prices.CSV_PATH, "w") as f:
@@ -382,12 +381,12 @@ class TestCategory3SettlementCapture(unittest.TestCase):
                 
             mock_read_local.assert_called_once()
             mock_github.assert_called_with("2026-05-18")
-            mock_yf_ticker.assert_not_called()
+            mock_tos.assert_not_called()
             
-            # --- Scenario 3: Local and GitHub missing, Yahoo Finance matches ---
+            # --- Scenario 3: Local and GitHub missing, ThinkOrSwim matches ---
             mock_read_local.reset_mock()
             mock_github.reset_mock()
-            mock_yf_ticker.reset_mock()
+            mock_tos.reset_mock()
             
             with open(ingest_prices.CSV_PATH, "w") as f:
                 f.write("date,nymex_rb,nymex_ho,rack_u,rack_p,rack_d\n")
@@ -395,14 +394,13 @@ class TestCategory3SettlementCapture(unittest.TestCase):
             mock_read_local.return_value = None
             mock_github.return_value = None
             
-            # Mock yfinance return
-            mock_ticker_obj = MagicMock()
-            mock_history_df = pd.DataFrame(
-                {'Close': [2.05]},
-                index=[datetime(2026, 5, 18, tzinfo=pytz.utc)]
-            )
-            mock_ticker_obj.history.return_value = mock_history_df
-            mock_yf_ticker.return_value = mock_ticker_obj
+            # Mock ThinkOrSwim/Schwab return
+            mock_tos.return_value = {
+                'date': '2026-05-18',
+                'rbob_settlement': 2.05,
+                'heating_oil_settlement': 2.15,
+                'source': 'tos_test'
+            }
             
             try:
                 ingest_prices.main()
@@ -411,9 +409,9 @@ class TestCategory3SettlementCapture(unittest.TestCase):
                 
             mock_read_local.assert_called_once()
             mock_github.assert_called_once()
-            # Yahoo finance called twice (once for RB=F, once for HO=F)
-            self.assertEqual(mock_yf_ticker.call_count, 2)
-            mock_yf_ticker.assert_has_calls([call('RB=F'), call('HO=F')], any_order=True)
+            # ThinkOrSwim fallback should have been called once
+            self.assertEqual(mock_tos.call_count, 1)
+            mock_tos.assert_called_with('2026-05-18')
             
         finally:
             ingest_prices.CSV_PATH = orig_csv_path

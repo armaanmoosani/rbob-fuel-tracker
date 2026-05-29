@@ -406,7 +406,8 @@ def get_thinkorswim_settlement(target_date_str):
                 qj = qres.json()
                 def pick_price(entry):
                     q = entry.get('quote', {}) if isinstance(entry, dict) else {}
-                    for k in ('closePrice', 'lastPrice', 'mark', 'midPrice'):
+                    # Prefer explicit settlement/close fields where available.
+                    for k in ('settlementPrice', 'closePrice', 'close', 'lastPrice', 'mark', 'midPrice'):
                         v = q.get(k)
                         if v not in (None, ''):
                             try:
@@ -450,12 +451,22 @@ def get_thinkorswim_settlement(target_date_str):
                     for row in reader:
                         if row.get('date') == target_date_str:
                             try:
-                                rb = float(row.get('rbob') or row.get('rbob_settlement') or '')
-                                ho = float(row.get('ho') or row.get('heating_oil_settlement') or '')
+                                # Support several common key names that may represent
+                                # the settlement/close price coming from ThinkOrSwim exports.
+                                def _get_numeric(keys):
+                                    for kk in keys:
+                                        if kk in row and row.get(kk) not in (None, ''):
+                                            try:
+                                                return float(row.get(kk))
+                                            except Exception:
+                                                continue
+                                    return None
+                                rb = _get_numeric(['rbob', 'rbob_settlement', 'rbob_close', 'rbob_settle', 'rbob_price'])
+                                ho = _get_numeric(['ho', 'heating_oil_settlement', 'heating_oil_close', 'ho_close', 'ho_settle', 'heating_oil_price'])
                                 return {
                                     'date': target_date_str,
-                                    'rbob_settlement': rb,
-                                    'heating_oil_settlement': ho,
+                                    'rbob_settlement': round(rb, 4) if rb is not None else None,
+                                    'heating_oil_settlement': round(ho, 4) if ho is not None else None,
                                     'source': 'tos_csv'
                                 }
                             except Exception:
@@ -480,14 +491,24 @@ def get_thinkorswim_settlement(target_date_str):
                     # Accept either top-level keys or nested snapshot
                     if isinstance(j, dict):
                         # normalize keys
-                        rb = j.get('rbob_settlement') or j.get('rbob') or j.get('price_rb')
-                        ho = j.get('heating_oil_settlement') or j.get('heating_oil') or j.get('price_ho')
+                        def _pick_from_json(dct, keys):
+                            for kk in keys:
+                                v = dct.get(kk)
+                                if v not in (None, ''):
+                                    try:
+                                        return float(v)
+                                    except Exception:
+                                        continue
+                            return None
+
+                        rb = _pick_from_json(j, ['rbob_settlement', 'rbob', 'price_rb', 'rbob_close', 'rbob_settle'])
+                        ho = _pick_from_json(j, ['heating_oil_settlement', 'heating_oil', 'price_ho', 'ho_close', 'ho_settle'])
                         date = j.get('date') or j.get('snapshot_date') or target_date_str
                         if date == target_date_str and rb is not None and ho is not None:
                             return {
                                 'date': date,
-                                'rbob_settlement': float(rb),
-                                'heating_oil_settlement': float(ho),
+                                'rbob_settlement': round(rb, 4),
+                                'heating_oil_settlement': round(ho, 4),
                                 'source': 'tos_http'
                             }
                 except Exception as je:
@@ -590,65 +611,12 @@ def main():
             print(f"GitHub variables success: RB={ds['rbob_settlement']}, HO={ds['heating_oil_settlement']}")
             
     if not ds:
-        print(f"GitHub variables missing or stale. Attempting Yahoo Finance fallback...")
-        # Try ThinkOrSwim export/source before yfinance (preferred reliable source)
+        print(f"GitHub variables missing or stale. Attempting ThinkOrSwim/Schwab fallback (no yfinance).")
+        # Try ThinkOrSwim/Schwab export/source only (preferred reliable source)
         tos_ds = get_thinkorswim_settlement(date_str)
         if tos_ds:
             ds = tos_ds
             print(f"ThinkOrSwim fallback success: RB={ds['rbob_settlement']}, HO={ds['heating_oil_settlement']}")
-        import time as _time
-        yf_pairs = [
-            ("RB=F", "HO=F"),
-            ("RBN26.NYM", "HON26.NYM"),
-        ]
-        for attempt in range(3):
-            try:
-                import yfinance as yf
-                rb_val, ho_val = None, None
-                for rb_sym, ho_sym in yf_pairs:
-                    if rb_val is None:
-                        try:
-                            rb_hist = yf.Ticker(rb_sym).history(period="5d")
-                            for dt, row in rb_hist.iterrows():
-                                # Use the date as yfinance provides it (exchange trade date).
-                                # Do NOT tz_convert to CT — NYMEX midnight-UTC bars would
-                                # shift to the previous evening in CT, giving the wrong date.
-                                dt_str = dt.strftime("%Y-%m-%d")
-                                if dt_str == date_str:
-                                    rb_val = round(float(row['Close']), 4)
-                                    break
-                        except Exception as e:
-                            print(f"yfinance {rb_sym} attempt {attempt+1} failed: {e}")
-                    if ho_val is None:
-                        try:
-                            ho_hist = yf.Ticker(ho_sym).history(period="5d")
-                            for dt, row in ho_hist.iterrows():
-                                # Same as RB: use exchange trade date directly.
-                                dt_str = dt.strftime("%Y-%m-%d")
-                                if dt_str == date_str:
-                                    ho_val = round(float(row['Close']), 4)
-                                    break
-                        except Exception as e:
-                            print(f"yfinance {ho_sym} attempt {attempt+1} failed: {e}")
-                    if rb_val is not None and ho_val is not None:
-                        break
-                if rb_val is not None and ho_val is not None:
-                    ds = {
-                        "date": date_str,
-                        "rbob_settlement": rb_val,
-                        "heating_oil_settlement": ho_val,
-                        "source": "yfinance_fallback"
-                    }
-                    print(f"Yahoo Finance fallback success: RB={rb_val}, HO={ho_val}")
-                    break
-                else:
-                    print(f"Could not find matching date {date_str} in Yahoo Finance history (attempt {attempt+1}).")
-                    if attempt < 2:
-                        _time.sleep(5 * (attempt + 1))
-            except Exception as yf_e:
-                print(f"Yahoo Finance fallback failed (attempt {attempt+1}): {mask_sensitive_text(yf_e)}")
-                if attempt < 2:
-                    _time.sleep(5 * (attempt + 1))
 
     if not ds:
         # Settlement data is unavailable but we still have the Graves prices.
