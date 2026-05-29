@@ -395,65 +395,59 @@ def get_thinkorswim_settlement(target_date_str):
                     dt_target = _dt.now()
                 rb_sym = get_front_month_schwab_symbol(dt_target, 'RB')
                 ho_sym = get_front_month_schwab_symbol(dt_target, 'HO')
-                symbols = f"{rb_sym},{ho_sym}"
-                qres = requests.get(
-                    "https://api.schwabapi.com/marketdata/v1/quotes",
-                    params={"symbols": symbols},
-                    headers={"Authorization": f"Bearer {access_token}"},
-                    timeout=10
-                )
-                qres.raise_for_status()
-                qj = qres.json()
-                # Optional debug: print concise Schwab response for RB/HO when enabled
-                if os.environ.get('INGEST_DEBUG'):
-                    try:
-                        print(f"Schwab API response keys: {list(qj.keys())}")
-                        for sym in (rb_sym, ho_sym):
-                            ent = None
-                            if isinstance(qj, dict):
-                                ent = qj.get(sym)
-                                if not ent:
-                                    # try to find nested by symbol
-                                    for v in qj.values():
-                                        if isinstance(v, dict) and v.get('quote', {}).get('symbol') == sym:
-                                            ent = v
-                                            break
-                            print(f"Schwab entry for {sym}: {ent.get('quote') if isinstance(ent, dict) else ent}")
-                    except Exception:
-                        pass
-                def pick_price(entry):
-                    q = entry.get('quote', {}) if isinstance(entry, dict) else {}
-                    # Prefer explicit settlement/close fields where available.
-                    for k in ('settlementPrice', 'closePrice', 'close', 'lastPrice', 'mark', 'midPrice'):
-                        v = q.get(k)
-                        if v not in (None, ''):
-                            try:
-                                return float(v)
-                            except Exception:
-                                continue
-                    return None
 
+                # Use pricehistory endpoint to get historical daily candles
                 rb_val = None
                 ho_val = None
-                # qj may be a dict keyed by symbol
-                if isinstance(qj, dict):
-                    for k, v in qj.items():
-                        if k == rb_sym and not rb_val:
-                            rb_val = pick_price(v)
-                        if k == ho_sym and not ho_val:
-                            ho_val = pick_price(v)
-                        # also check nested
-                        if not rb_val and isinstance(v, dict) and v.get('quote', {}).get('symbol') == rb_sym:
-                            rb_val = pick_price(v)
-                        if not ho_val and isinstance(v, dict) and v.get('quote', {}).get('symbol') == ho_sym:
-                            ho_val = pick_price(v)
+
+                for symbol in (rb_sym, ho_sym):
+                    try:
+                        ph_res = requests.get(
+                            "https://api.schwabapi.com/marketdata/v1/pricehistory",
+                            params={
+                                "symbol": symbol,
+                                "periodType": "month",
+                                "period": 1,
+                                "frequencyType": "daily",
+                                "frequency": 1
+                            },
+                            headers={"Authorization": f"Bearer {access_token}"},
+                            timeout=10
+                        )
+                        ph_res.raise_for_status()
+                        ph_data = ph_res.json()
+
+                        # Look for candle matching target date
+                        candles = ph_data.get('candles', [])
+                        for candle in candles:
+                            # datetime is in milliseconds (epoch)
+                            candle_dt = _dt.fromtimestamp(candle.get('datetime', 0) / 1000)
+                            candle_date_str = candle_dt.date().isoformat()
+                            if candle_date_str == target_date_str:
+                                close_val = candle.get('close')
+                                if close_val is not None:
+                                    close_val = float(close_val)
+                                    if symbol == rb_sym:
+                                        rb_val = close_val
+                                    elif symbol == ho_sym:
+                                        ho_val = close_val
+                                if os.environ.get('INGEST_DEBUG'):
+                                    print(f"Schwab pricehistory candle for {symbol} on {target_date_str}: close={close_val}")
+                                break
+                        else:
+                            if os.environ.get('INGEST_DEBUG'):
+                                print(f"No candle found in pricehistory for {symbol} on {target_date_str}")
+                    except Exception as e:
+                        if os.environ.get('INGEST_DEBUG'):
+                            print(f"Schwab pricehistory fetch for {symbol} failed: {e}")
+                        continue
 
                 if rb_val is not None and ho_val is not None:
                     return {
                         'date': target_date_str,
                         'rbob_settlement': round(rb_val, 4),
                         'heating_oil_settlement': round(ho_val, 4),
-                        'source': 'schwab_api'
+                        'source': 'schwab_pricehistory'
                     }
         except Exception as e:
             print(f'ThinkOrSwim/Schwab API fetch failed: {e}')
