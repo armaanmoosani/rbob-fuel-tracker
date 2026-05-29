@@ -374,6 +374,7 @@ def get_thinkorswim_settlement(target_date_str):
     if SCHWAB_APP_KEY and SCHWAB_APP_SECRET and SCHWAB_REFRESH_TOKEN:
         try:
             import base64
+            import requests
             from datetime import datetime as _dt
             from futures_util import get_front_month_schwab_symbol
             auth_header = base64.b64encode(f"{SCHWAB_APP_KEY}:{SCHWAB_APP_SECRET}".encode()).decode()
