@@ -474,6 +474,38 @@ def build_rack_signal(prefix, data, now):
         is_mocked = False
 
     roll_day = is_contract_roll_day(now, prefix)
+    if roll_day:
+        # Cross-check with the cached active symbol: if today's session and yesterday's
+        # session both resolve to the same contract (e.g., both /RBN26), the market has
+        # not actually changed contracts — the calendar LTD fired early due to
+        # market-convention early roll (thinkorswim/yfinance switch 3–5 weeks before LTD).
+        # In that case, override the calendar roll flag to False so we don't suppress.
+        try:
+            _state = load_alert_state()
+            _today_session = get_session_date_str(now)
+            from datetime import datetime as _dt_cls, date as _date_cls
+            _now_ct = now.astimezone(TZ) if hasattr(now, 'astimezone') else now
+            _prev_session = get_session_date_str(
+                (_now_ct - timedelta(days=3)).replace(hour=12)  # go back ~3 days to find prev session
+            )
+            # Walk back up to 7 days to find a non-holiday/weekend cached symbol
+            from datetime import timedelta as _td
+            for _back in range(1, 8):
+                _prev_ct = _now_ct - _td(days=_back)
+                _prev_sess = get_session_date_str(_prev_ct.replace(hour=12))
+                _prev_sym = _state.get(f"ACTIVE_SYMBOL_{prefix}_{_prev_sess}")
+                if _prev_sym:
+                    break
+            else:
+                _prev_sym = None
+            _today_sym = _state.get(f"ACTIVE_SYMBOL_{prefix}_{_today_session}")
+            if _today_sym and _prev_sym and _today_sym == _prev_sym:
+                print(f"[{prefix}] Calendar LTD fired (roll_day=True) but active symbol "
+                      f"unchanged ({_today_sym} == {_prev_sym}). "
+                      f"Market has not rolled — overriding roll_day to False.")
+                roll_day = False
+        except Exception as _e:
+            print(f"[{prefix}] Warning: could not verify roll via symbol cache: {_e}")
     if roll_day and not (running_tests and not is_mocked):
         risk_text = "Suppressing alert due to NYMEX front-month contract rollover day."
         if CONFIG_CORRUPT:
@@ -1858,6 +1890,27 @@ def fetch_commodity(prefix, cfg, now, access_token):
                     on_roll_day = True
             except Exception:
                 pass
+        # Market-convention override: if the calendar LTD fired but the cached active
+        # symbol for today and a recent prior session are the same contract, the market
+        # has already rolled weeks ago and the calendar is a false positive.
+        if on_roll_day and cached_symbol:
+            try:
+                _now_ct = now.astimezone(TZ) if hasattr(now, 'astimezone') else now
+                for _back in range(1, 8):
+                    from datetime import timedelta as _td2
+                    _prev_ct = _now_ct - _td2(days=_back)
+                    _prev_sess = get_session_date_str(_prev_ct.replace(hour=12))
+                    _prev_sym = state.get(f"ACTIVE_SYMBOL_{prefix}_{_prev_sess}")
+                    if _prev_sym:
+                        break
+                else:
+                    _prev_sym = None
+                if _prev_sym and cached_symbol == _prev_sym:
+                    print(f"[{prefix}] Calendar LTD fired in fetch_commodity but symbol "
+                          f"unchanged ({cached_symbol}). Market already rolled — cache is valid.")
+                    on_roll_day = False
+            except Exception as _e:
+                print(f"[{prefix}] Warning: symbol-continuity check failed in fetch_commodity: {_e}")
     if cached_symbol and not on_roll_day:
         schwab_symbol = cached_symbol
         print(f"[{prefix}] Using cached active symbol for session {session_str}: {schwab_symbol}")
