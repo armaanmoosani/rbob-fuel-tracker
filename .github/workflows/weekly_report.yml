@@ -40,7 +40,9 @@ jobs:
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add --ignore-unmatch data/prediction_log.csv data/integrity_hashes.csv reports/
+          [ -f data/prediction_log.csv ]  && git add data/prediction_log.csv  || true
+          [ -f data/integrity_hashes.csv ] && git add data/integrity_hashes.csv || true
+          [ -d reports ] && git add reports/ || true
           if ! git diff --cached --quiet; then
             git commit -m "Auto-generate weekly performance dashboard and backfill logs"
             # Fetch remote changes first, then rebase.
