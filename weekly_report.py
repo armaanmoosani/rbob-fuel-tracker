@@ -157,7 +157,7 @@ def main():
         print("No resolved predictions yet.")
         return
     
-    df['timestamp_dt'] = pd.to_datetime(df['timestamp'], format='ISO8601')
+    df['timestamp_dt'] = pd.to_datetime(df['timestamp'], format='ISO8601', utc=True).dt.tz_convert('America/Chicago')
     df = df.sort_values('timestamp_dt').copy()
 
     # Vectorized calculation of savings and correctness
@@ -203,8 +203,7 @@ def main():
     avg_savings_per_truck_dollars = (avg_savings_per_active_alert_cents / 100.0) * TRUCK_GALLONS
     
     # Weekly metrics (Last 7 days activity)
-    tz_chicago = pytz.timezone('America/Chicago')
-    now_chicago = pd.Timestamp.now(tz=tz_chicago)
+    now_chicago = pd.Timestamp.now(tz='America/Chicago')
     cutoff_7d = now_chicago - pd.Timedelta(days=7)
     
     # Filter resolved predictions in the last 7 calendar days
@@ -283,6 +282,8 @@ def main():
         has_90d_history = False
 
     # Filter to active alerts (HIKE/DROP) for rolling precision calculation
+    df_alerts = df_alerts.copy()
+    df_alerts['rolling_precision'] = np.nan  # initialize so column always exists
     if has_90d_history and len(df_alerts) > 0:
         rolling_precisions = []
         for i, row in df_alerts.iterrows():
